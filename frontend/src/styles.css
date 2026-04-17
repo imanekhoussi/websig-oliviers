@@ -132,7 +132,76 @@ input, textarea, select { font-family: inherit; }
   text-transform: uppercase;
 }
 
-.header-status { display: flex; align-items: center; gap: var(--s2); }
+.header-status { display: flex; align-items: center; gap: var(--s3); }
+
+/* Séparateur vertical dans le header */
+.header-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border-strong);
+  flex-shrink: 0;
+}
+
+/* Contrôles de mission compacts dans le header */
+.header-mission-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-mission-select {
+  height: 30px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: var(--fs-xs);
+  min-width: 200px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.header-mission-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-dim);
+}
+
+.btn-header-new {
+  height: 30px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-dim);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-header-new:hover {
+  background: rgba(34, 197, 94, 0.28);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.btn-header-delete {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--color-danger);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-header-delete:hover {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.28);
+}
 
 .status-dot {
   width: 6px; height: 6px;
@@ -1107,6 +1176,231 @@ input, textarea, select { font-family: inherit; }
   color: #f39c12;
 }
 
+/* ── 17b. BILAN HYDRIQUE FAO-56 ─────────────────────── */
+.water-balance-card {
+  margin-top: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: rgba(6, 22, 38, 0.75);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius);
+}
+
+.wb-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--s3);
+}
+
+.wb-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.wb-deficit {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.wb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.wb-label {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  flex: 1;
+  cursor: pointer;
+}
+
+.wb-input {
+  width: 110px;
+  padding: 4px var(--s2);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--fs-sm);
+  text-align: right;
+  transition: border-color 0.15s;
+}
+.wb-input:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+
+.wb-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--s2) 0;
+  border-top: 1px solid rgba(56, 189, 248, 0.15);
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  margin-top: var(--s1);
+}
+
+.wb-total-value {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.wb-select {
+  width: 148px;
+  padding: 4px var(--s2);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.wb-select:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+
+.wb-subtotal-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--s1) 0;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  border-top: 1px solid rgba(56, 189, 248, 0.08);
+  margin-top: var(--s1);
+}
+
+.wb-meteo-badge {
+  display: inline-block;
+  margin-left: var(--s2);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.wb-footnote {
+  margin-top: var(--s2);
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+/* ── Bouton Mode Multicritère AHP ───────────────────── */
+.btn-mcda {
+  display: block;
+  width: calc(100% - var(--s4) * 2);
+  margin: 0 var(--s4);
+  padding: var(--s2) var(--s3);
+  background: rgba(10, 5, 20, 0.7);
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  border-radius: var(--radius);
+  color: #a78bfa;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  text-align: center;
+}
+.btn-mcda:hover {
+  background: rgba(124, 58, 237, 0.1);
+  border-color: rgba(124, 58, 237, 0.75);
+  color: #c4b5fd;
+}
+.btn-mcda.active {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: #7c3aed;
+  color: #a78bfa;
+}
+
+/* ── Panneau MCDA / AHP ─────────────────────────────── */
+.mcda-panel {
+  margin: 0 var(--s4) var(--s2);
+  padding: var(--s3) var(--s4);
+  background: rgba(10, 5, 20, 0.6);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  border-radius: var(--radius);
+}
+
+.mcda-description {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-bottom: var(--s3);
+}
+
+.mcda-slider-row {
+  margin-bottom: var(--s3);
+}
+
+.mcda-slider-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+  font-size: var(--fs-xs);
+  color: var(--color-text);
+}
+
+.mcda-pct {
+  font-weight: 700;
+  color: #a78bfa;
+  min-width: 38px;
+  text-align: right;
+}
+
+.mcda-range {
+  width: 100%;
+  accent-color: #7c3aed;
+  cursor: pointer;
+  height: 4px;
+}
+
+.mcda-legend-row {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid rgba(124, 58, 237, 0.2);
+}
+
+.mcda-legend-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.mcda-gradient-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #22c55e, #84cc16, #f59e0b, #ef4444, #7c3aed);
+  margin-bottom: 4px;
+}
+
+.mcda-gradient-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--color-text-subtle);
+}
+
 /* ── 18. SPLIT-SCREEN COMPARAISON ──────────────────── */
 
 /* Bouton Comparer dans le header */
@@ -1278,4 +1572,71 @@ input, textarea, select { font-family: inherit; }
   .brand h1     { font-size: var(--fs-base); }
   .weather-grid { grid-template-columns: 1fr; }
   .kpis         { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── 21. LEAFLET DRAW — DARK MODE PROPRE ────────────── */
+
+/* 1. Conteneur principal (sans bordure blanche) */
+.leaflet-bar {
+  border: none !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+}
+
+/* 2. Style de base (Zoom +, Zoom -) */
+.leaflet-bar a {
+  background-color: #1e293b !important;
+  color: #e2e8f0 !important;
+  border-bottom: 1px solid #334155 !important;
+}
+.leaflet-bar a:hover {
+  background-color: #334155 !important;
+  color: #ffffff !important;
+}
+
+/* 3. Correction pour les icônes de dessin (Sprite SVG noir sur fond clair → inversé) */
+.leaflet-draw-toolbar a {
+  background-color: #e2e8f0 !important;
+  filter: invert(90%) hue-rotate(180deg) contrast(1.1) !important;
+  border-bottom: 1px solid #cbd5e1 !important;
+}
+.leaflet-draw-toolbar a:hover {
+  background-color: #ffffff !important;
+}
+
+/* 4. Tooltips de dessin */
+.leaflet-draw-tooltip {
+  background: #1e293b !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4) !important;
+  border-radius: 4px !important;
+}
+.leaflet-draw-tooltip::before {
+  border-right-color: #1e293b !important;
+}
+
+/* ── 22. ATTRIBUTION LEAFLET — DARK MODE ────────────── */
+.leaflet-control-attribution {
+  background-color: rgba(30, 41, 59, 0.85) !important;
+  color: #94a3b8 !important;
+  border-top-left-radius: 6px;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: none;
+  border-right: none;
+}
+
+.leaflet-control-attribution a {
+  color: #cbd5e1 !important;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.leaflet-control-attribution a:hover {
+  color: #38bdf8 !important;
+  text-decoration: underline;
 }

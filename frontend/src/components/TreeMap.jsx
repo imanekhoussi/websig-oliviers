@@ -32,6 +32,23 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
   useEffect(() => {
     if (!map || !setSelectedTrees) return
 
+    // Traduction française des tooltips Leaflet Draw
+    if (window.L?.drawLocal) {
+      const d = window.L.drawLocal.draw
+      d.toolbar.actions.title = 'Annuler le dessin'
+      d.toolbar.actions.text  = 'Annuler'
+      d.toolbar.finish.title  = 'Terminer le dessin'
+      d.toolbar.finish.text   = 'Terminer'
+      d.toolbar.undo.title    = 'Supprimer le dernier point'
+      d.toolbar.undo.text     = 'Annuler le point'
+      d.handlers.polygon.tooltip.start  = 'Cliquez pour commencer à dessiner la zone.'
+      d.handlers.polygon.tooltip.cont   = 'Cliquez pour continuer le dessin.'
+      d.handlers.polygon.tooltip.end    = 'Cliquez sur le premier point pour fermer la zone.'
+      d.handlers.polyline.tooltip.start = 'Cliquez pour commencer la ligne de mesure.'
+      d.handlers.circle.tooltip.start   = 'Cliquez et glissez pour dessiner une zone circulaire.'
+      d.handlers.marker.tooltip.start   = 'Cliquez sur la carte pour placer un marqueur.'
+    }
+
     const fg = new window.L.FeatureGroup()
     map.addLayer(fg)
 
@@ -40,10 +57,10 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       draw: {
         polygon:      { shapeOptions: { color: '#38bdf8', weight: 2 } },
         rectangle:    { shapeOptions: { color: '#38bdf8', weight: 2 } },
-        circle:       false,
+        circle:       { shapeOptions: { color: '#38bdf8', weight: 2 } },
+        polyline:     { shapeOptions: { color: '#38bdf8', weight: 2 } },
+        marker:       true,
         circlemarker: false,
-        marker:       false,
-        polyline:     false,
       },
     })
     map.addControl(drawControl)
@@ -52,8 +69,23 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       fg.clearLayers()
       fg.addLayer(e.layer)
 
-      const drawnGeoJSON = e.layer.toGeoJSON()
       const features = allFeaturesRef.current   // toujours à jour
+
+      // Polyline et marker ne définissent pas de zone de sélection
+      if (e.layerType === 'polyline' || e.layerType === 'marker') {
+        setSelectedTrees(null)
+        return
+      }
+
+      // Circle : convertit le cercle Leaflet en polygone GeoJSON via Turf
+      let selectionPolygon
+      if (e.layerType === 'circle') {
+        const { lat, lng } = e.layer.getLatLng()
+        const radiusKm = e.layer.getRadius() / 1000
+        selectionPolygon = turf.circle([lng, lat], radiusKm, { units: 'kilometers' })
+      } else {
+        selectionPolygon = e.layer.toGeoJSON()
+      }
 
       if (!features?.length) { setSelectedTrees([]); return }
 
@@ -61,7 +93,7 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
         try {
           // turf.centroid fonctionne sur Point ET Polygon (couronne d'arbre)
           const center = turf.centroid(feature)
-          return turf.booleanPointInPolygon(center, drawnGeoJSON)
+          return turf.booleanPointInPolygon(center, selectionPolygon)
         } catch {
           return false
         }
@@ -303,6 +335,8 @@ export default function TreeMap({
   selectedTrees = null,
   showIDW = false,
   showRoute = false,
+  showMCDA = false,
+  mcdaScores = {},
 }) {
   // Cache de l'historique : { [treeId]: data[] }
   const historyCache = useRef({})
@@ -447,13 +481,24 @@ export default function TreeMap({
     f => activeStress.includes(f.properties.stress || 'inconnu')
   )
 
+  function vulnerabilityToColor(score) {
+    if (score == null) return '#64748b'
+    if (score < 20)   return '#22c55e'
+    if (score < 40)   return '#84cc16'
+    if (score < 60)   return '#f59e0b'
+    if (score < 80)   return '#ef4444'
+    return '#7c3aed'
+  }
+
   // applySelection=true uniquement pour la mission courante (pas le panneau de comparaison)
   function renderMarkers(features, pane, applySelection = false) {
     return features.map((feat, index) => {
       if (!feat.geometry?.coordinates) return null
 
       const p         = feat.properties
-      const color     = STRESS_COLORS[p.stress] || STRESS_COLORS.inconnu
+      const color     = showMCDA && mcdaScores[p.id] != null
+        ? vulnerabilityToColor(mcdaScores[p.id])
+        : STRESS_COLORS[p.stress] || STRESS_COLORS.inconnu
       const key       = `${pane ?? 'default'}-${p.id != null ? p.id : index}`
       const history   = historyCache.current[p.id]
       const paneProps = pane ? { pane } : {}

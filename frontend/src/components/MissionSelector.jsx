@@ -22,37 +22,33 @@ export default function MissionSelector({ missions, currentId, onSelect, onRefre
   }
 
   return (
-    <div className="mission-selector">
-      <div className="mission-selector-title">Mission active</div>
+    <div className="header-mission-controls">
+      <select
+        className="header-mission-select"
+        value={currentId || ''}
+        onChange={e => onSelect(e.target.value || null)}
+      >
+        <option value="">— Mission —</option>
+        {missions.map(m => (
+          <option key={m.id} value={m.id}>
+            {m.date} · {m.nom} {m.has_shapefile ? '✓' : '⚠️'}
+          </option>
+        ))}
+      </select>
 
-      <div className="mission-select-row">
-        <select
-          value={currentId || ''}
-          onChange={e => onSelect(e.target.value || null)}
+      <button className="btn-header-new" onClick={() => setShowForm(true)}>
+        + Nouvelle
+      </button>
+
+      {currentId && (
+        <button
+          className="btn-header-delete"
+          onClick={() => setPendingDelete(currentId)}
+          title="Supprimer cette mission"
         >
-          <option value="">— Sélectionner —</option>
-          {missions.map(m => (
-            <option key={m.id} value={m.id}>
-              {m.date} · {m.nom} {m.has_shapefile ? '✓' : '⚠️ vide'}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="mission-actions">
-        <button className="btn-primary" onClick={() => setShowForm(true)}>
-          + Nouvelle
+          🗑
         </button>
-        {currentId && (
-          <button
-            className="btn-danger"
-            onClick={() => setPendingDelete(currentId)}
-            title="Supprimer cette mission"
-          >
-            🗑 Supprimer
-          </button>
-        )}
-      </div>
+      )}
 
       {/* Formulaire de création */}
       {showForm && (

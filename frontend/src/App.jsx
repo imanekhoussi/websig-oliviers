@@ -9,6 +9,7 @@ import TrendPanel     from './components/TrendPanel'
 import MissionSelector, { MissionUploadZone } from './components/MissionSelector'
 import { StatsSkeleton } from './components/Skeleton'
 import { STRESS_COLORS } from './constants'
+import MCDAPanel from './components/MCDAPanel'
 
 
 const STRESS_LEVELS = ['aucun', 'faible', 'modere', 'eleve', 'severe']
@@ -76,6 +77,9 @@ function Dashboard() {
   const [selectedTrees, setSelectedTrees] = useState(null)
   const [showIDW, setShowIDW]             = useState(false)
   const [showRoute, setShowRoute]         = useState(false)
+  const [showMCDA, setShowMCDA]           = useState(false)
+  const [weightStress, setWeightStress]   = useState(60)
+  const [weightHeight, setWeightHeight]   = useState(40)
 
   // Auto-sélectionne la première mission avec données au premier chargement
   const didInit = useRef(false)
@@ -101,6 +105,22 @@ function Dashboard() {
     [selectedTrees]
   )
   const displayStats = zonalStats ?? stats
+
+  // Calcul des indices de vulnérabilité MCDA (AHP) en temps réel
+  const mcdaScores = useMemo(() => {
+    if (!showMCDA || !geojson?.features?.length) return {}
+    const stressScore = { aucun: 0, faible: 25, modere: 50, eleve: 75, severe: 100 }
+    const heights = geojson.features.map(f => f.properties.hauteur).filter(h => h != null)
+    const maxH = heights.length ? Math.max(...heights) : 1
+    const scores = {}
+    geojson.features.forEach(f => {
+      const p = f.properties
+      const sStress = stressScore[p.stress] ?? 0
+      const sHeight = maxH > 0 ? ((maxH - (p.hauteur ?? maxH)) / maxH) * 100 : 0
+      scores[p.id] = +((sStress * weightStress + sHeight * weightHeight) / 100).toFixed(1)
+    })
+    return scores
+  }, [showMCDA, geojson, weightStress, weightHeight])
 
   const visibleCount = geojson?.features.filter(
     f => activeStress.includes(f.properties.stress || 'inconnu')
@@ -144,14 +164,14 @@ function Dashboard() {
           <h1>GeoOlive</h1>
         </div>
         <div className="header-status">
-          {currentMission && (
-            <>
-              <span className="status-dot" />
-              <span className="status-pill">
-                {currentMission.nom || currentMission.id} · {currentMission.date}
-              </span>
-            </>
-          )}
+          <MissionSelector
+            missions={missions}
+            currentId={currentId}
+            onSelect={handleSelect}
+            onRefresh={refresh}
+          />
+
+          <span className="header-sep" />
 
           {isCompareMode && (
             <>
@@ -192,12 +212,22 @@ function Dashboard() {
           </span>
         </div>
         <div className="panel-float-body">
-          <MissionSelector
-            missions={missions}
-            currentId={currentId}
-            onSelect={handleSelect}
-            onRefresh={refresh}
-          />
+          {hasMapData && (
+            <button
+              className={`btn-mcda${showMCDA ? ' active' : ''}`}
+              onClick={() => setShowMCDA(v => !v)}
+            >
+              🧮 {showMCDA ? 'Désactiver le Mode Multicritère' : 'Mode Multicritère (AHP)'}
+            </button>
+          )}
+
+          {showMCDA && hasMapData && (
+            <MCDAPanel
+              weightStress={weightStress}
+              weightHeight={weightHeight}
+              onChange={(wS, wH) => { setWeightStress(wS); setWeightHeight(wH) }}
+            />
+          )}
 
           {currentMission && !currentMission.has_shapefile && (
             <MissionUploadZone missionId={currentId} onUploaded={refresh} />
@@ -212,6 +242,7 @@ function Dashboard() {
                 missionCompare={isCompareMode && !selectedTrees ? compareMission : null}
                 isZonalActive={selectedTrees !== null}
                 onClearZonal={() => setSelectedTrees(null)}
+                features={selectedTrees}
               />
           }
 
@@ -259,6 +290,8 @@ function Dashboard() {
           selectedTrees={selectedTrees}
           showIDW={showIDW}
           showRoute={showRoute}
+          showMCDA={showMCDA}
+          mcdaScores={mcdaScores}
         />
 
         {/* Indicateurs quand aucune donnée */}
