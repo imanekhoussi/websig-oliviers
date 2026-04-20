@@ -12,18 +12,18 @@ function TrendTooltip({ active, payload, label }) {
   const val = payload[0].value
   return (
     <div style={{
-      background: 'rgba(8, 14, 26, 0.97)',
+      background: 'rgba(255,255,255,0.97)',
       backdropFilter: 'blur(16px)',
       WebkitBackdropFilter: 'blur(16px)',
-      border: '1px solid rgba(148,163,184,0.22)',
+      border: '1px solid rgba(203,213,225,0.8)',
       borderRadius: 8,
       padding: '9px 13px',
       fontSize: 12,
-      color: '#f1f5f9',
-      boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+      color: '#0f172a',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
       lineHeight: 1.6,
     }}>
-      <div style={{ color: '#94a3b8', marginBottom: 3 }}>Mission : {label}</div>
+      <div style={{ color: '#64748b', marginBottom: 3 }}>Mission : {label}</div>
       <div>CWSI moyen : <b>{val != null ? val.toFixed(3) : '—'}</b></div>
     </div>
   )
@@ -79,7 +79,7 @@ export default function TrendPanel({ missions, currentId }) {
       {!loading && data.length > 0 && (
         <>
           <ResponsiveContainer width="100%" height={205}>
-            <LineChart data={data} margin={{ top: 16, right: 16, left: -16, bottom: 58 }}>
+            <LineChart data={data} margin={{ top: 16, right: 16, left: -16, bottom: 65 }}>
               <CartesianGrid
                 strokeDasharray="4 4"
                 stroke="rgba(148,163,184,0.08)"

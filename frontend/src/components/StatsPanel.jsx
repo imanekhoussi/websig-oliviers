@@ -7,24 +7,25 @@ import {
 import * as turf from '@turf/turf'
 import { STRESS_LABELS } from '../constants'
 import { exportCsvUrl } from '../api'
+import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind } from 'react-icons/lu'
 
 /* Tooltip glassmorphism partagé */
 function GlassTip({ active, payload, label, formatter }) {
   if (!active || !payload?.length) return null
   return (
     <div style={{
-      background: 'rgba(8, 14, 26, 0.95)',
+      background: 'rgba(255, 255, 255, 0.97)',
       backdropFilter: 'blur(16px)',
       WebkitBackdropFilter: 'blur(16px)',
-      border: '1px solid rgba(148, 163, 184, 0.2)',
+      border: '1px solid rgba(203, 213, 225, 0.8)',
       borderRadius: 8,
       padding: '8px 12px',
       fontSize: 12,
-      color: '#f1f5f9',
-      boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+      color: '#0f172a',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
       lineHeight: 1.6,
     }}>
-      <div style={{ color: '#94a3b8', marginBottom: 3 }}>{label}</div>
+      <div style={{ color: '#64748b', marginBottom: 3 }}>{label}</div>
       {payload.map((entry, i) => (
         <div key={i}>
           <b>{formatter ? formatter(entry.value) : entry.value}</b>
@@ -105,7 +106,7 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
     return (
       <div className="panel">
         <div className="panel-empty">
-          <span style={{ fontSize: 32, display: 'block', marginBottom: 8, opacity: 0.4 }}>📊</span>
+          <LuActivity size={40} style={{ opacity: 0.4, marginBottom: 8 }} />
           Sélectionnez ou créez une mission<br />pour voir les statistiques.
         </div>
       </div>
@@ -127,7 +128,7 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
       {isZonalActive && (
         <div className="zonal-header">
           <div className="zonal-header-label">
-            <span className="zonal-header-icon">📍</span>
+            <LuMapPin size={14} />
             <span>Zone sélectionnée</span>
             <span className="zonal-header-count">{stats.total_arbres} arbre{stats.total_arbres !== 1 ? 's' : ''}</span>
           </div>
@@ -156,9 +157,9 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
         {mission.notes && <p className="notes">{mission.notes}</p>}
         {mission.meteo && (mission.meteo.temp_air != null || mission.meteo.humidite != null) && (
           <div className="meteo">
-            {mission.meteo.temp_air  != null && <span>🌡️ {mission.meteo.temp_air}°C</span>}
-            {mission.meteo.humidite  != null && <span>💧 {mission.meteo.humidite}%</span>}
-            {mission.meteo.vent      != null && <span>💨 {mission.meteo.vent} m/s</span>}
+            {mission.meteo.temp_air != null && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><LuThermometer size={14} /> {mission.meteo.temp_air}°C</span>}
+            {mission.meteo.humidite != null && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><LuDroplet size={14} /> {mission.meteo.humidite}%</span>}
+            {mission.meteo.vent     != null && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><LuWind size={14} /> {mission.meteo.vent} m/s</span>}
           </div>
         )}
       </div>
@@ -209,13 +210,13 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
 
       {/* ── Répartition stress ── */}
       <h3>Répartition par stress</h3>
-      <div style={{ width: '100%', height: 175 }}>
+      <div style={{ width: '100%', height: 220 }}>
         <ResponsiveContainer>
           <BarChart
             data={stats.stress_breakdown.map(s => ({ ...s, label: STRESS_LABELS[s.classe] }))}
-            margin={{ top: 6, right: 6, left: 20, bottom: 45 }}
+            margin={{ top: 6, right: 6, left: 0, bottom: 60 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.07)" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
             <XAxis
               dataKey="label" angle={-28} textAnchor="end"
               interval={0} fontSize={12}
@@ -229,7 +230,7 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
               tickLine={false} axisLine={false}
               width={28}
             />
-            <Tooltip content={<StressTip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+            <Tooltip content={<StressTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
             <Bar dataKey="count" radius={[4, 4, 0, 0]}>
               {stats.stress_breakdown.map((e, i) => (
                 <Cell key={i} fill={e.color} fillOpacity={0.88} />
@@ -241,13 +242,13 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
 
       {/* ── Distribution CWSI ── */}
       <h3>Distribution CWSI</h3>
-      <div style={{ width: '100%', height: 155 }}>
+      <div style={{ width: '100%', height: 190 }}>
         <ResponsiveContainer>
           <BarChart
             data={stats.histogram_cwsi}
-            margin={{ top: 6, right: 6, left: -10, bottom: 30 }}
+            margin={{ top: 6, right: 6, left: -10, bottom: 45 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.07)" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
             <XAxis
               dataKey="bin" fontSize={11} angle={-45} textAnchor="end"
               interval={0}
@@ -261,7 +262,7 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
               tickLine={false} axisLine={false}
               width={28}
             />
-            <Tooltip content={<CwsiTip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+            <Tooltip content={<CwsiTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
             <Bar dataKey="count" fill="#38bdf8" fillOpacity={0.8} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -381,7 +382,7 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
                       interval={0}
                     />
                     <YAxis hide />
-                    <Tooltip content={<ForecastTip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                    <Tooltip content={<ForecastTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                     <Area
                       type="monotone"
                       dataKey="besoinM3"

@@ -10,6 +10,10 @@ import MissionSelector, { MissionUploadZone } from './components/MissionSelector
 import { StatsSkeleton } from './components/Skeleton'
 import { STRESS_COLORS } from './constants'
 import MCDAPanel from './components/MCDAPanel'
+import {
+  LuDroplets, LuTriangleAlert, LuMap, LuRoute,
+  LuSlidersHorizontal, LuSatellite, LuTrendingUp,
+} from 'react-icons/lu'
 
 
 const STRESS_LEVELS = ['aucun', 'faible', 'modere', 'eleve', 'severe']
@@ -78,6 +82,7 @@ function Dashboard() {
   const [showIDW, setShowIDW]             = useState(false)
   const [showRoute, setShowRoute]         = useState(false)
   const [showMCDA, setShowMCDA]           = useState(false)
+  const [showSectors, setShowSectors]     = useState(false)
   const [weightStress, setWeightStress]   = useState(60)
   const [weightHeight, setWeightHeight]   = useState(40)
 
@@ -207,7 +212,7 @@ function Dashboard() {
       <aside className="col-left">
         <div className="panel-float-header">
           <span className="panel-float-title">
-            <span className="panel-float-icon">📡</span>
+            <LuSatellite size={14} />
             Missions & Statistiques
           </span>
         </div>
@@ -217,7 +222,8 @@ function Dashboard() {
               className={`btn-mcda${showMCDA ? ' active' : ''}`}
               onClick={() => setShowMCDA(v => !v)}
             >
-              🧮 {showMCDA ? 'Désactiver le Mode Multicritère' : 'Mode Multicritère (AHP)'}
+              <LuSlidersHorizontal size={16} />
+              {showMCDA ? 'Désactiver le Multicritère' : 'Mode Multicritère (AHP)'}
             </button>
           )}
 
@@ -251,7 +257,8 @@ function Dashboard() {
               className={`btn-hotspots${showHotspots ? ' active' : ''}`}
               onClick={() => setShowHotspots(v => !v)}
             >
-              🚨 {showHotspots ? 'Masquer les zones critiques' : 'Analyser les zones critiques'}
+              <LuTriangleAlert size={16} />
+              {showHotspots ? 'Masquer les zones critiques' : 'Analyser les zones critiques'}
             </button>
           )}
 
@@ -260,7 +267,8 @@ function Dashboard() {
               className={`btn-idw${showIDW ? ' active' : ''}`}
               onClick={() => setShowIDW(v => !v)}
             >
-              🗺️ {showIDW ? 'Masquer la surface IDW' : 'Activer la surface continue (IDW)'}
+              <LuMap size={16} />
+              {showIDW ? 'Masquer la surface IDW' : 'Activer la surface continue (IDW)'}
             </button>
           )}
 
@@ -269,7 +277,18 @@ function Dashboard() {
               className={`btn-route${showRoute ? ' active' : ''}`}
               onClick={() => setShowRoute(v => !v)}
             >
-              🚶‍♂️ {showRoute ? 'Masquer la tournée' : 'Générer la tournée d\'inspection'}
+              <LuRoute size={16} />
+              {showRoute ? 'Masquer la tournée' : "Générer la tournée d'inspection"}
+            </button>
+          )}
+
+          {hasMapData && (
+            <button
+              className={`btn-sectors${showSectors ? ' active' : ''}`}
+              onClick={() => setShowSectors(v => !v)}
+            >
+              <LuDroplets size={16} />
+              {showSectors ? "Masquer les secteurs d'irrigation" : "Générer les secteurs d'irrigation"}
             </button>
           )}
         </div>
@@ -292,6 +311,7 @@ function Dashboard() {
           showRoute={showRoute}
           showMCDA={showMCDA}
           mcdaScores={mcdaScores}
+          showSectors={showSectors}
         />
 
         {/* Indicateurs quand aucune donnée */}
@@ -318,7 +338,7 @@ function Dashboard() {
       <aside className="col-right">
         <div className="panel-float-header">
           <span className="panel-float-title">
-            <span className="panel-float-icon">📈</span>
+            <LuTrendingUp size={14} />
             Tendances temporelles
           </span>
         </div>

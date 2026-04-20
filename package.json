@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@loaders.gl/core": "^4.4.1",
-    "@math.gl/core": "^4.1.0"
+    "@math.gl/core": "^4.1.0",
+    "react-icons": "^5.6.0"
   }
 }

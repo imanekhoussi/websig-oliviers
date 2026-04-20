@@ -9,6 +9,7 @@ import {
 } from 'recharts'
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import { fetchTreeHistory } from '../api'
+import { LuThermometer, LuRuler, LuDroplet, LuFootprints } from 'react-icons/lu'
 
 const { BaseLayer, Overlay } = LayersControl
 
@@ -125,7 +126,7 @@ function reverseCoordinates(coords) {
   return coords.map(reverseCoordinates)
 }
 
-/** Contrôleur interne : fait voler la carte vers les nouvelles données */
+/** Contrôleur interne : ajuste la vue pour englober toute l'emprise des données */
 function MapController({ geojson }) {
   const map     = useMap()
   const prevRef = useRef(null)
@@ -134,20 +135,16 @@ function MapController({ geojson }) {
     if (!geojson?.features?.length || geojson === prevRef.current) return
     prevRef.current = geojson
 
-    const first = geojson.features.find(f => f.geometry?.coordinates)
-    if (!first) return
+    // Calcul de l'emprise (Bounding Box) de toutes les données
+    const bbox = turf.bbox(geojson) // [minLng, minLat, maxLng, maxLat]
 
-    let center
-    if (first.geometry.type === 'Point') {
-      center = [first.geometry.coordinates[1], first.geometry.coordinates[0]]
-    } else {
-      const c = first.geometry.type === 'Polygon'
-        ? first.geometry.coordinates[0][0]
-        : first.geometry.coordinates[0][0][0]
-      center = [c[1], c[0]]
-    }
+    // Conversion au format Leaflet : [[Sud, Ouest], [Nord, Est]]
+    const bounds = [
+      [bbox[1], bbox[0]],
+      [bbox[3], bbox[2]],
+    ]
 
-    map.flyTo(center, 18, { duration: 1.3, easeLinearity: 0.4 })
+    map.flyToBounds(bounds, { padding: [40, 40], duration: 1.5 })
   }, [geojson, map])
 
   return null
@@ -211,19 +208,19 @@ function TreePopup({ p, color, history }) {
         {/* ── Grille 3 colonnes ── */}
         <div className="popup-grid">
           <div className="popup-cell">
-            <span className="popup-cell-icon">🌡️</span>
+            <span className="popup-cell-icon"><LuThermometer size={16} /></span>
             <span className="popup-cell-label">Temp.</span>
             <span className="popup-cell-value">{p.temp_moy?.toFixed(1) ?? '—'}<small>°C</small></span>
           </div>
           <div className="popup-cell">
-            <span className="popup-cell-icon">📏</span>
+            <span className="popup-cell-icon"><LuRuler size={16} /></span>
             <span className="popup-cell-label">Hauteur</span>
             <span className="popup-cell-value">
               {p.hauteur != null ? <>{p.hauteur.toFixed(1)}<small>m</small></> : '—'}
             </span>
           </div>
           <div className="popup-cell">
-            <span className="popup-cell-icon">💧</span>
+            <span className="popup-cell-icon"><LuDroplet size={16} /></span>
             <span className="popup-cell-label">CWSI</span>
             <span className="popup-cell-value" style={{ color }}>{p.cwsi?.toFixed(3) ?? '—'}</span>
           </div>
@@ -313,6 +310,14 @@ function cwsiToStressColor(cwsi) {
   return STRESS_COLORS.severe
 }
 
+const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b']
+
+/** Style Leaflet pour les secteurs K-Means */
+function sectorStyleFn(feature) {
+  const color = SECTOR_COLORS[feature?.properties?.cluster_id] ?? '#94a3b8'
+  return { color, weight: 2, dashArray: '4, 4', fillColor: color, fillOpacity: 0.2 }
+}
+
 /** Style Leaflet appliqué à chaque cellule de la grille IDW */
 function idwStyleFn(feature) {
   return {
@@ -337,6 +342,7 @@ export default function TreeMap({
   showRoute = false,
   showMCDA = false,
   mcdaScores = {},
+  showSectors = false,
 }) {
   // Cache de l'historique : { [treeId]: data[] }
   const historyCache = useRef({})
@@ -466,6 +472,50 @@ export default function TreeMap({
 
     return { line, start, count: ordered.length }
   }, [showRoute, geojson])
+
+  // ── Sectorisation K-Means (3 secteurs d'irrigation) ──
+  const sectorPolygons = useMemo(() => {
+    if (!showSectors || !geojson?.features?.length) return null
+
+    const filtered = geojson.features.filter(
+      f => activeStress.includes(f.properties.stress || 'inconnu')
+    )
+    if (filtered.length < 3) return null
+
+    // A — Centroïdes en FeatureCollection de Points
+    const points = turf.featureCollection(
+      filtered.map(f => {
+        const pt = turf.centroid(f)
+        pt.properties = { ...f.properties }
+        return pt
+      })
+    )
+
+    // B — Clustering K-Means (3 secteurs)
+    let clustered
+    try {
+      clustered = turf.clustersKmeans(points, { numberOfClusters: 3 })
+    } catch {
+      return null
+    }
+
+    // C — Enveloppe convexe + buffer 5 m par cluster
+    const polygons = []
+    for (let i = 0; i < 3; i++) {
+      const clusterPts = turf.featureCollection(
+        clustered.features.filter(f => f.properties.cluster === i)
+      )
+      if (clusterPts.features.length < 3) continue
+      const hull = turf.convex(clusterPts)
+      if (!hull) continue
+      const buffered = turf.buffer(hull, 5, { units: 'meters' })
+      if (!buffered) continue
+      buffered.properties = { cluster_id: i }
+      polygons.push(buffered)
+    }
+
+    return polygons.length > 0 ? turf.featureCollection(polygons) : null
+  }, [showSectors, geojson, activeStress])
 
   // Set des IDs sélectionnés pour lookup O(1)
   const selectedIds = useMemo(
@@ -624,6 +674,17 @@ export default function TreeMap({
           )}
         </LayersControl>
 
+        {/* ── Secteurs K-Means : z410, au-dessus de l'ortho (z400), sous IDW (z420) ── */}
+        <Pane name="sectors-pane" style={{ zIndex: 410 }} />
+        {sectorPolygons && (
+          <GeoJSON
+            key={`sectors-${sectorPolygons.features.length}-${geojson?.features?.length ?? 0}-${activeStress.join('')}`}
+            data={sectorPolygons}
+            style={sectorStyleFn}
+            pane="sectors-pane"
+          />
+        )}
+
         {/* ── Grille IDW : z420, au-dessus de l'ortho (z400), sous hotspots (z450) ── */}
         <Pane name="idw-pane" style={{ zIndex: 420 }} />
         {idwGrid && (
@@ -665,7 +726,7 @@ export default function TreeMap({
               <Popup className="tree-popup-wrapper" minWidth={140}>
                 <div className="custom-popup">
                   <div className="popup-header">
-                    <span className="popup-title">🚶‍♂️ Départ tournée</span>
+                    <span className="popup-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><LuFootprints size={16} /> Départ tournée</span>
                   </div>
                   <div style={{ fontSize: 12, color: '#94a3b8', padding: '4px 0' }}>
                     {routeResult.count} arbre{routeResult.count !== 1 ? 's' : ''} sévères à inspecter
