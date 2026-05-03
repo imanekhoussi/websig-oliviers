@@ -1,0 +1,15 @@
+{
+  "date": "2026-04-21",
+  "nom": "Mission 2026-04-21",
+  "notes": "",
+  "meteo": {
+    "temp_air": null,
+    "humidite": null,
+    "vent": null
+  },
+  "created_at": "2026-04-21T17:23:51",
+  "ortho_formats": {
+    "rgb": "zip",
+    "thermal": "zip"
+  }
+}

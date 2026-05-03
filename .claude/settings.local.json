@@ -4,7 +4,14 @@
       "Bash(npm run *)",
       "Bash(npm install *)",
       "Bash(node -e \"require\\('@deck.gl/react'\\); console.log\\('ok'\\)\")",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(grep -E \"\\\\.\\(py|jsx|js|txt\\)$\")",
+      "Bash(npm list *)",
+      "Bash(venv\\\\Scripts\\\\pip install *)",
+      "Bash(C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\venv\\\\Scripts\\\\pip.exe install *)",
+      "Bash(\"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\venv\\\\Scripts\\\\pip.exe\" install *)",
+      "Bash(\"venv\\\\Scripts\\\\python.exe\" -c \"from fpdf import FPDF; from config import STRESS_COLORS; print\\('imports OK'\\); print\\('STRESS_COLORS:', STRESS_COLORS\\)\")",
+      "Bash('venv\\\\Scripts\\\\python.exe' -c ' *)"
     ]
   }
 }

@@ -15,8 +15,11 @@ history_router = APIRouter(prefix="/api/trees", tags=["history"])
 def get_all_trees(mission_id: str):
     try:
         gdf = load_trees(mission_id)
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e))
+    except FileNotFoundError:
+        # Mission existe mais pas encore de shapefile → GeoJSON vide (200)
+        return {"type": "FeatureCollection", "features": []}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     return json.loads(gdf.to_json())
 
 

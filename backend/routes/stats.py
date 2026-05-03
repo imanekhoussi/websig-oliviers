@@ -11,12 +11,29 @@ from config import STRESS_COLORS
 router = APIRouter(prefix="/api/missions/{mission_id}/stats", tags=["stats"])
 
 
+_EMPTY_STATS = {
+    "total_arbres": 0,
+    "stress_breakdown": [
+        {"classe": l, "count": 0, "color": STRESS_COLORS.get(l, "#95a5a6")}
+        for l in ["faible", "modere", "eleve", "severe"]
+    ],
+    "cwsi":        {"moyenne": None, "min": None, "max": None},
+    "temperature": {"moyenne": None, "min": None, "max": None},
+    "hauteur":     {"moyenne": None, "min": None, "max": None},
+    "circonf":     {"moyenne": None, "min": None, "max": None},
+    "histogram_cwsi": [],
+}
+
+
 @router.get("")
 def get_stats(mission_id: str):
     try:
         gdf = load_trees(mission_id)
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e))
+    except FileNotFoundError:
+        # Mission sans shapefile → stats vides (200, headers CORS présents)
+        return _EMPTY_STATS
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
     stress_counts = Counter(gdf["stress"].tolist())
     stress_breakdown = [
@@ -25,7 +42,7 @@ def get_stats(mission_id: str):
             "count": stress_counts.get(label, 0),
             "color": STRESS_COLORS.get(label, "#95a5a6"),
         }
-        for label in ["aucun", "faible", "modere", "eleve", "severe"]
+        for label in ["faible", "modere", "eleve", "severe"]
     ]
 
     def stats_of(series):

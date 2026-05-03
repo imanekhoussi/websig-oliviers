@@ -2,11 +2,11 @@ import { useState, useMemo, useEffect } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, CartesianGrid,
-  AreaChart, Area,
+  AreaChart, Area, ReferenceLine,
 } from 'recharts'
 import * as turf from '@turf/turf'
 import { STRESS_LABELS } from '../constants'
-import { exportCsvUrl } from '../api'
+import { exportXlsxUrl, exportPdfUrl } from '../api'
 import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind } from 'react-icons/lu'
 
 /* Tooltip glassmorphism partagé */
@@ -43,6 +43,32 @@ function CwsiTip(props) {
   return <GlassTip {...props} />
 }
 
+function CherguiTip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  const d = payload[0]?.payload
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.97)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      border: '1px solid rgba(203,213,225,0.8)',
+      borderRadius: 8,
+      padding: '8px 12px',
+      fontSize: 12,
+      color: '#0f172a',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+      lineHeight: 1.7,
+    }}>
+      <div style={{ color: '#64748b', marginBottom: 2 }}>{label}</div>
+      <div>T° max : <b>{d?.tMax != null ? d.tMax.toFixed(1) : '—'}°C</b></div>
+      <div>Vent max : <b>{d?.windMs != null ? d.windMs.toFixed(1) : '—'} m/s</b></div>
+      {d?.isChergui && (
+        <div style={{ color: '#e74c3c', fontWeight: 600, marginTop: 2 }}>⚠ Chergui</div>
+      )}
+    </div>
+  )
+}
+
 function ForecastTip(props) {
   return <GlassTip {...props} formatter={v => `${v} m³`} />
 }
@@ -55,6 +81,8 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
   const [irrigationEfficiency, setIrrigationEfficiency] = useState(0.90)
   const [forecastData,         setForecastData]         = useState(null)
   const [isFetchingMeteo,      setIsFetchingMeteo]      = useState(false)
+  const [cherguiData,          setCherguiData]          = useState(null)
+  const [isLoadingChergui,     setIsLoadingChergui]     = useState(false)
 
   // ET0 + prévisions J+7 — Penman-Monteith FAO-56 via Open-Meteo
   useEffect(() => {
@@ -102,6 +130,42 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
     })
   }, [isZonalActive, features, forecastData, irrigationEfficiency])
 
+  // Analyse Chergui inter-missions — fetch Open-Meteo Archive
+  useEffect(() => {
+    if (!isCompare || !mission?.date || !missionCompare?.date) {
+      setCherguiData(null)
+      return
+    }
+    const dates = [mission.date, missionCompare.date].sort()
+    const [d1, d2] = dates
+    if (d1 === d2) { setCherguiData([]); return }
+    setIsLoadingChergui(true)
+    fetch(
+      `https://archive-api.open-meteo.com/v1/archive?latitude=35.76&longitude=-5.83` +
+      `&start_date=${d1}&end_date=${d2}` +
+      `&daily=temperature_2m_max,wind_speed_10m_max&wind_speed_unit=ms&timezone=Africa%2FCasablanca`
+    )
+      .then(r => r.json())
+      .then(data => {
+        if (data?.daily) {
+          const { time, temperature_2m_max, wind_speed_10m_max } = data.daily
+          setCherguiData(time.map((t, i) => ({
+            date: t,
+            tMax: temperature_2m_max[i],
+            windMs: wind_speed_10m_max[i],
+            isChergui: temperature_2m_max[i] > 35 && wind_speed_10m_max[i] > 4,
+          })))
+        }
+      })
+      .catch(() => setCherguiData([]))
+      .finally(() => setIsLoadingChergui(false))
+  }, [isCompare, mission?.date, missionCompare?.date])
+
+  const cherguiDays = useMemo(
+    () => (cherguiData || []).filter(d => d.isChergui),
+    [cherguiData]
+  )
+
   if (!mission) {
     return (
       <div className="panel">
@@ -145,14 +209,27 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
             <h2>{mission.nom || mission.id}</h2>
             <div className="mission-date">{mission.date}</div>
           </div>
-          <a
-            href={exportCsvUrl(mission.id)}
-            download
-            className="btn-export-csv"
-            title="Télécharger le rapport CSV"
-          >
-            📥 CSV
-          </a>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <a
+              href={exportXlsxUrl(mission.id, features?.map(f => f.properties.id))}
+              download
+              className="btn-export-csv"
+              title={isZonalActive ? 'Exporter la sélection (Excel)' : 'Télécharger le rapport complet (Excel)'}
+            >
+              {isZonalActive ? '📊 Export sélection' : '📊 Rapport Excel'}
+            </a>
+            {!isZonalActive && (
+              <a
+                href={exportPdfUrl(mission.id)}
+                download
+                className="btn-export-csv"
+                title="Télécharger le rapport PDF"
+                style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', borderColor: 'rgba(239,68,68,0.25)' }}
+              >
+                📄 Rapport PDF
+              </a>
+            )}
+          </div>
         </div>
         {mission.notes && <p className="notes">{mission.notes}</p>}
         {mission.meteo && (mission.meteo.temp_air != null || mission.meteo.humidite != null) && (
@@ -205,6 +282,91 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
           <Kpi label="Arbres"    value={stats.total_arbres} />
           <Kpi label="CWSI moy." value={stats.cwsi.moyenne?.toFixed(2) ?? '—'} />
           <Kpi label="T° moy."   value={stats.temperature.moyenne != null ? `${stats.temperature.moyenne}°C` : '—'} />
+        </div>
+      )}
+
+      {/* ── Analyse Chergui inter-missions ── */}
+      {isCompare && (
+        <div style={{ marginBottom: 4 }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <LuWind size={14} style={{ color: '#f97316' }} />
+            Analyse Chergui
+            {isLoadingChergui && (
+              <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 400 }}>⏳ chargement…</span>
+            )}
+          </h3>
+          {isLoadingChergui && cherguiData === null ? (
+            <div style={{ fontSize: 12, color: '#94a3b8', paddingBottom: 8 }}>
+              Récupération des données météo historiques…
+            </div>
+          ) : cherguiData === null ? null : cherguiData.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#94a3b8', paddingBottom: 8 }}>
+              Données météo non disponibles pour cette période.
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 8 }}>
+                {cherguiDays.length === 0 ? (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontSize: 12, fontWeight: 600,
+                    background: 'rgba(16,185,129,0.12)', color: '#10b981',
+                    border: '1px solid rgba(16,185,129,0.25)',
+                    borderRadius: 6, padding: '2px 8px',
+                  }}>✓ Aucune période de Chergui détectée</span>
+                ) : (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+                    fontSize: 12, fontWeight: 600,
+                    background: 'rgba(231,76,60,0.12)', color: '#e74c3c',
+                    border: '1px solid rgba(231,76,60,0.25)',
+                    borderRadius: 6, padding: '2px 8px',
+                  }}>
+                    ⚠ {cherguiDays.length} jour{cherguiDays.length > 1 ? 's' : ''} de Chergui
+                    {cherguiDays.length <= 5 && ` · ${cherguiDays.map(d => d.date.slice(5)).join(', ')}`}
+                  </span>
+                )}
+              </div>
+              <div style={{ width: '100%', height: 130 }}>
+                <ResponsiveContainer>
+                  <BarChart
+                    data={cherguiData}
+                    margin={{ top: 4, right: 6, left: -10, bottom: 30 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      fontSize={10}
+                      angle={-45}
+                      textAnchor="end"
+                      interval={cherguiData.length <= 14 ? 0 : Math.ceil(cherguiData.length / 8)}
+                      tick={{ fill: '#94a3b8' }}
+                      tickLine={false}
+                      axisLine={{ stroke: 'rgba(148,163,184,0.15)' }}
+                    />
+                    <YAxis
+                      fontSize={11}
+                      tick={{ fill: '#94a3b8' }}
+                      tickLine={false}
+                      axisLine={false}
+                      width={28}
+                      domain={[0, 'auto']}
+                    />
+                    <Tooltip content={<CherguiTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
+                    <ReferenceLine y={35} stroke="#f97316" strokeDasharray="4 2" strokeWidth={1.5} />
+                    <Bar dataKey="tMax" radius={[3, 3, 0, 0]}>
+                      {cherguiData.map((d, i) => (
+                        <Cell key={i} fill={d.isChergui ? '#e74c3c' : '#38bdf8'} fillOpacity={0.82} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: '0 4px 4px', lineHeight: 1.5 }}>
+                T° max quotidienne · barres rouges = Chergui (T° &gt; 35°C + Vent &gt; 4 m/s)
+              </p>
+            </>
+          )}
         </div>
       )}
 

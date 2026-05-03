@@ -31,7 +31,16 @@ export async function updateMission(id, data) {
 
 export async function deleteMission(id) {
   const r = await fetch(`${API}/api/missions/${id}`, { method: 'DELETE' })
-  if (!r.ok) throw new Error('Erreur suppression mission')
+  if (!r.ok) {
+    let detail = 'Erreur lors de la suppression de la mission'
+    try {
+      const d = await r.json()
+      detail = Array.isArray(d.detail)
+        ? d.detail.map(e => e.msg || JSON.stringify(e)).join(' · ')
+        : d.detail || detail
+    } catch (_) { /* réponse non-JSON : on garde le message par défaut */ }
+    throw new Error(detail)
+  }
   return r.json()
 }
 
@@ -42,7 +51,13 @@ export async function uploadShapefile(missionId, files) {
     method: 'POST', body: fd,
   })
   const d = await r.json()
-  if (!r.ok) throw new Error(d.detail || 'Erreur upload')
+  if (!r.ok) {
+    // FastAPI renvoie detail en string (HTTPException) ou en tableau (validation error)
+    const detail = Array.isArray(d.detail)
+      ? d.detail.map(e => e.msg || JSON.stringify(e)).join(' · ')
+      : d.detail || "Erreur lors de l'importation du fichier"
+    throw new Error(detail)
+  }
   return d
 }
 
@@ -59,8 +74,45 @@ export async function fetchStats(missionId) {
   return r.json()
 }
 
-export function exportCsvUrl(missionId) {
-  return `${API}/api/missions/${missionId}/export`
+/** Construit l'URL d'export Excel. Si ids est fourni (export zonal), les filtre. */
+export function exportXlsxUrl(missionId, ids = null) {
+  const base = `${API}/api/missions/${missionId}/export`
+  const filtered = ids?.filter(id => id != null) ?? []
+  return filtered.length > 0 ? `${base}?ids=${filtered.join(',')}` : base
+}
+
+export function exportPdfUrl(missionId) {
+  return `${API}/api/missions/${missionId}/export-pdf`
+}
+
+export async function uploadOrtho(missionId, orthoType, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const r = await fetch(
+    `${API}/api/missions/${missionId}/upload-ortho?ortho_type=${orthoType}`,
+    { method: 'POST', body: fd },
+  )
+  if (!r.ok) {
+    let detail = "Erreur lors de l'import de l'orthomosaïque"
+    try {
+      const d = await r.json()
+      detail = Array.isArray(d.detail)
+        ? d.detail.map(e => e.msg || JSON.stringify(e)).join(' · ')
+        : d.detail || detail
+    } catch (_) { /* réponse non-JSON (timeout, proxy) : on garde le message par défaut */ }
+    throw new Error(detail)
+  }
+  return r.json()
+}
+
+export async function deleteOrtho(missionId, orthoType) {
+  const r = await fetch(
+    `${API}/api/missions/${missionId}/ortho/${orthoType}`,
+    { method: 'DELETE' },
+  )
+  const d = await r.json()
+  if (!r.ok) throw new Error(d.detail || 'Erreur suppression ortho')
+  return d
 }
 
 export async function fetchTreeHistory(treeId) {

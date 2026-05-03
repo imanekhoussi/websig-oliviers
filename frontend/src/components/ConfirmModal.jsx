@@ -8,6 +8,8 @@
  *   onConfirm      Callback sur confirmation
  *   onCancel       Callback sur annulation
  */
+import { createPortal } from 'react-dom'
+
 export default function ConfirmModal({
   title,
   message,
@@ -16,7 +18,7 @@ export default function ConfirmModal({
   onConfirm,
   onCancel,
 }) {
-  return (
+  return createPortal(
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal confirm-modal" onClick={e => e.stopPropagation()}>
         <div className="confirm-icon">{danger ? '⚠️' : '❓'}</div>
@@ -32,6 +34,7 @@ export default function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

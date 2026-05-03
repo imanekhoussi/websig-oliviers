@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap, FeatureGroup } from 'react-leaflet'
+import { MapContainer, TileLayer, LayerGroup, FeatureGroup, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap } from 'react-leaflet'
+import parseGeoraster from 'georaster'
+import GeoRasterLayer from 'georaster-layer-for-leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import 'leaflet-draw'
@@ -10,8 +12,6 @@ import {
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import { fetchTreeHistory } from '../api'
 import { LuThermometer, LuRuler, LuDroplet, LuFootprints } from 'react-icons/lu'
-
-const { BaseLayer, Overlay } = LayersControl
 
 const DEFAULT_CENTER = [35.76, -5.83]
 const DEFAULT_ZOOM   = 7
@@ -150,25 +150,6 @@ function MapController({ geojson }) {
   return null
 }
 
-/** Applique clip-path sur les panes gauche/droite selon splitPos */
-function ClipController({ splitPos, isCompareMode }) {
-  const map = useMap()
-
-  useEffect(() => {
-    const leftPane  = map.getPane('left-pane')
-    const rightPane = map.getPane('right-pane')
-    if (!isCompareMode) {
-      if (leftPane)  leftPane.style.clipPath  = ''
-      if (rightPane) rightPane.style.clipPath = ''
-      return
-    }
-    if (leftPane)  leftPane.style.clipPath  = `inset(0 ${100 - splitPos}% 0 0)`
-    if (rightPane) rightPane.style.clipPath = `inset(0 0 0 ${splitPos}%)`
-  }, [splitPos, isCompareMode, map])
-
-  return null
-}
-
 /** Tooltip minimaliste pour le graphique historique */
 function HistoryTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
@@ -300,13 +281,12 @@ const HOTSPOT_STYLE = {
   fillOpacity: 0.2,
 }
 
-/** Classe un score CWSI en niveau de stress et retourne la couleur associée */
+/** Classe un score CWSI en niveau de stress et retourne la couleur associée (4 classes) */
 function cwsiToStressColor(cwsi) {
   if (cwsi == null) return STRESS_COLORS.inconnu
-  if (cwsi < 0.1)  return STRESS_COLORS.aucun
-  if (cwsi < 0.3)  return STRESS_COLORS.faible
-  if (cwsi < 0.5)  return STRESS_COLORS.modere
-  if (cwsi < 0.7)  return STRESS_COLORS.eleve
+  if (cwsi < 0.25)  return STRESS_COLORS.faible
+  if (cwsi < 0.50)  return STRESS_COLORS.modere
+  if (cwsi < 0.75)  return STRESS_COLORS.eleve
   return STRESS_COLORS.severe
 }
 
@@ -316,6 +296,92 @@ const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b']
 function sectorStyleFn(feature) {
   const color = SECTOR_COLORS[feature?.properties?.cluster_id] ?? '#94a3b8'
   return { color, weight: 2, dashArray: '4, 4', fillColor: color, fillOpacity: 0.2 }
+}
+
+/**
+ * Charge un GeoTIFF brut et l'ajoute à la carte via GeoRasterLayer.
+ * Doit être rendu comme enfant d'un <LayersControl.Overlay> pour apparaître
+ * dans le contrôleur de couches — le parent gère la case à cocher.
+ */
+function GeoRasterRenderer({ missionId, orthoType, opacity = 0.8, pane = 'overlayPane' }) {
+  const map = useMap()
+  const tag = `[GeoRaster:${orthoType}]`
+
+  useEffect(() => {
+    if (!missionId) return
+
+    let layer     = null
+    let cancelled = false
+
+    async function load() {
+      const url = `http://localhost:8000/uploads/${missionId}/${orthoType}.tif`
+      console.log(`${tag} 1. Début du fetch TIF… → ${url}`)
+
+      let res
+      try {
+        res = await fetch(url)
+      } catch (err) {
+        console.error(`${tag} Erreur réseau / CORS :`, err)
+        return
+      }
+
+      if (!res.ok) {
+        if (res.status !== 404) {
+          console.error(`${tag} HTTP ${res.status} pour ${url}`)
+        } else {
+          console.log(`${tag} 404 — fichier absent, couche ignorée.`)
+        }
+        return
+      }
+      if (cancelled) return
+
+      const arrayBuffer = await res.arrayBuffer()
+      if (cancelled) return
+      console.log(`${tag} 2. Buffer reçu, taille :`, arrayBuffer.byteLength)
+
+      let georaster
+      try {
+        georaster = await parseGeoraster(arrayBuffer)
+      } catch (err) {
+        console.error(`${tag} parseGeoraster a échoué :`, err)
+        return
+      }
+      if (cancelled) return
+      console.log(`${tag} 3. GeoRaster parsé :`, georaster)
+
+      layer = new GeoRasterLayer({
+        georaster,
+        opacity,
+        resolution: 256,
+        pane,
+        maxZoom: 24,
+        maxNativeZoom: 20,
+      })
+      layer.addTo(map)
+      console.log(`${tag} 4. Couche ajoutée à la carte.`)
+
+      try {
+        const bounds = layer.getBounds()
+        if (bounds && bounds.isValid()) {
+          map.fitBounds(bounds)
+          console.log(`${tag} 5. fitBounds effectué.`)
+        } else {
+          console.warn(`${tag} getBounds() invalide — zoom manuel nécessaire.`)
+        }
+      } catch (e) {
+        console.warn(`${tag} fitBounds a échoué :`, e)
+      }
+    }
+
+    load()
+
+    return () => {
+      cancelled = true
+      if (layer && map.hasLayer(layer)) map.removeLayer(layer)
+    }
+  }, [missionId, orthoType, map, opacity, tag])
+
+  return null
 }
 
 /** Style Leaflet appliqué à chaque cellule de la grille IDW */
@@ -329,12 +395,14 @@ function idwStyleFn(feature) {
 
 export default function TreeMap({
   geojson,
-  activeStress = ['aucun', 'faible', 'modere', 'eleve', 'severe'],
+  activeStress = ['faible', 'modere', 'eleve', 'severe'],
   isCompareMode = false,
   geojsonCompare,
   currentLabel = '',
   compareLabel = '',
   currentId = null,
+  currentMission = null,
+  compareMission = null,
   showHotspots = false,
   setSelectedTrees = null,
   selectedTrees = null,
@@ -344,14 +412,17 @@ export default function TreeMap({
   mcdaScores = {},
   showSectors = false,
 }) {
+  const compareId = compareMission?.id ?? null
+
   // Cache de l'historique : { [treeId]: data[] }
   const historyCache = useRef({})
   const [, forceUpdate] = useState(0)
 
-  // Split screen
-  const [splitPos, setSplitPos] = useState(50)
-  const isDragging = useRef(false)
-  const wrapperRef = useRef(null)
+  // Split screen — ref seulement, pas de state, zéro re-render pendant le glissement
+  const splitPosRef = useRef(50)
+  const isDragging  = useRef(false)
+  const wrapperRef  = useRef(null)
+  const mapRef      = useRef(null)   // instance Leaflet Map
 
   const fetchHistory = useCallback((treeId) => {
     if (treeId == null || historyCache.current[treeId]) return
@@ -365,13 +436,44 @@ export default function TreeMap({
       })
   }, [])
 
-  // Gestion du glisser-déposer du séparateur
+  // Initialise le clip-path à 50 % dès l'activation du mode comparaison.
+  // setTimeout(0) garantit que les <Pane> enfants ont fini leur montage.
+  useEffect(() => {
+    if (!isCompareMode) {
+      splitPosRef.current = 50
+      return
+    }
+    const timer = setTimeout(() => {
+      const pct       = splitPosRef.current
+      const leftPane  = mapRef.current?.getPane('left-pane')
+      const rightPane = mapRef.current?.getPane('right-pane')
+      if (leftPane)  leftPane.style.clipPath  = `inset(0 ${100 - pct}% 0 0)`
+      if (rightPane) rightPane.style.clipPath = `inset(0 0 0 ${pct}%)`
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [isCompareMode])
+
+  // Glisser-déposer du séparateur — manipulation DOM directe, 0 setState → 60 fps
   useEffect(() => {
     function onMouseMove(e) {
       if (!isDragging.current || !wrapperRef.current) return
       const rect = wrapperRef.current.getBoundingClientRect()
       const pct  = Math.min(Math.max((e.clientX - rect.left) / rect.width * 100, 10), 90)
-      setSplitPos(pct)
+      splitPosRef.current = pct
+
+      // Panes Leaflet — clip-path direct
+      const leftPane  = mapRef.current?.getPane('left-pane')
+      const rightPane = mapRef.current?.getPane('right-pane')
+      if (leftPane)  leftPane.style.clipPath  = `inset(0 ${100 - pct}% 0 0)`
+      if (rightPane) rightPane.style.clipPath = `inset(0 0 0 ${pct}%)`
+
+      // Éléments UI — style direct
+      const divider = document.getElementById('split-divider')
+      if (divider) divider.style.left = `calc(${pct}% - 2px)`
+      const labelLeft  = document.getElementById('split-label-left')
+      const labelRight = document.getElementById('split-label-right')
+      if (labelLeft)  labelLeft.style.left  = `${pct / 2}%`
+      if (labelRight) labelRight.style.left = `${pct + (100 - pct) / 2}%`
     }
     function onMouseUp() { isDragging.current = false }
     window.addEventListener('mousemove', onMouseMove)
@@ -524,12 +626,17 @@ export default function TreeMap({
   )
   const hasSelection = selectedTrees !== null
 
-  const visibleFeatures = (geojson?.features ?? []).filter(
-    f => activeStress.includes(f.properties.stress || 'inconnu')
-  )
-  const visibleCompareFeatures = (geojsonCompare?.features ?? []).filter(
-    f => activeStress.includes(f.properties.stress || 'inconnu')
-  )
+  const KNOWN_CLASSES = new Set(['faible', 'modere', 'eleve', 'severe'])
+  const visibleFeatures = (geojson?.features ?? []).filter(f => {
+    const s = f.properties.stress
+    if (!s || !KNOWN_CLASSES.has(s)) return true   // inconnu / héritage → toujours visible
+    return activeStress.includes(s)
+  })
+  const visibleCompareFeatures = (geojsonCompare?.features ?? []).filter(f => {
+    const s = f.properties.stress
+    if (!s || !KNOWN_CLASSES.has(s)) return true
+    return activeStress.includes(s)
+  })
 
   function vulnerabilityToColor(score) {
     if (score == null) return '#64748b'
@@ -551,7 +658,7 @@ export default function TreeMap({
         : STRESS_COLORS[p.stress] || STRESS_COLORS.inconnu
       const key       = `${pane ?? 'default'}-${p.id != null ? p.id : index}`
       const history   = historyCache.current[p.id]
-      const paneProps = pane ? { pane } : {}
+      const paneProps = pane ? { pane } : { pane: 'markerPane' }
 
       // Dimming : arbre hors-sélection → quasi-transparent
       const dimmed = applySelection && hasSelection && !selectedIds.has(p.id)
@@ -623,14 +730,15 @@ export default function TreeMap({
   return (
     <div ref={wrapperRef} style={{ position: 'relative', width: '100%', height: '100%' }}>
       <MapContainer
+        ref={mapRef}
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}
-        maxZoom={22}
+        maxZoom={24}
         style={{ height: '100%', width: '100%' }}
       >
         <MapController geojson={geojson} />
-        <ClipController splitPos={splitPos} isCompareMode={isCompareMode} />
         <DrawControl allFeatures={geojson?.features ?? []} setSelectedTrees={setSelectedTrees} />
+
 
         {isCompareMode && (
           <>
@@ -640,38 +748,114 @@ export default function TreeMap({
         )}
 
         <LayersControl position="topright">
-          <BaseLayer checked name="Satellite (Esri)">
+
+          {/* ── Fonds de carte ── */}
+          <LayersControl.BaseLayer checked name="Satellite (Esri)">
             <TileLayer
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-              maxZoom={22}
-              maxNativeZoom={17}
-              attribution="&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+              maxZoom={24} maxNativeZoom={18}
+              attribution="&copy; Esri"
             />
-          </BaseLayer>
-          <BaseLayer name="Mode Sombre (CartoDB)">
+          </LayersControl.BaseLayer>
+          <LayersControl.BaseLayer name="Mode Sombre (CartoDB)">
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              maxZoom={24} maxNativeZoom={20}
               attribution="&copy; CARTO"
             />
-          </BaseLayer>
-          <BaseLayer name="OpenStreetMap">
+          </LayersControl.BaseLayer>
+          <LayersControl.BaseLayer name="OpenStreetMap">
             <TileLayer
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              maxZoom={24} maxNativeZoom={19}
               attribution="&copy; OSM"
             />
-          </BaseLayer>
+          </LayersControl.BaseLayer>
 
-          {currentId && (
-            <Overlay name="Orthomosaïque Drone RGB" checked={false}>
+          {/* ── Orthomosaïque RGB — mission courante (left-pane en comparaison) ── */}
+          {currentId && currentMission?.ortho_formats?.rgb === 'tif' && (
+            <LayersControl.Overlay checked name="Orthomosaïque RGB">
+              <LayerGroup>
+                <GeoRasterRenderer
+                  missionId={currentId} orthoType="rgb" opacity={0.8}
+                  pane={isCompareMode ? 'left-pane' : 'overlayPane'}
+                />
+              </LayerGroup>
+            </LayersControl.Overlay>
+          )}
+          {currentId && currentMission?.ortho_formats?.rgb === 'zip' && (
+            <LayersControl.Overlay checked name="Orthomosaïque RGB">
               <TileLayer
                 url={`http://localhost:8000/tiles/${currentId}/rgb_tiles/{z}/{x}/{y}.png`}
-                maxNativeZoom={22}
-                maxZoom={24}
-                errorTileUrl=""
-                attribution="Drone RGB"
+                maxZoom={24} maxNativeZoom={20}
+                pane={isCompareMode ? 'left-pane' : 'overlayPane'}
               />
-            </Overlay>
+            </LayersControl.Overlay>
           )}
+
+          {/* ── Orthomosaïque Thermique — mission courante (left-pane en comparaison) ── */}
+          {currentId && currentMission?.ortho_formats?.thermal === 'tif' && (
+            <LayersControl.Overlay checked name="Orthomosaïque Thermique">
+              <LayerGroup>
+                <GeoRasterRenderer
+                  missionId={currentId} orthoType="thermal" opacity={0.8}
+                  pane={isCompareMode ? 'left-pane' : 'overlayPane'}
+                />
+              </LayerGroup>
+            </LayersControl.Overlay>
+          )}
+          {currentId && currentMission?.ortho_formats?.thermal === 'zip' && (
+            <LayersControl.Overlay checked name="Orthomosaïque Thermique">
+              <TileLayer
+                url={`http://localhost:8000/tiles/${currentId}/thermal_tiles/{z}/{x}/{y}.png`}
+                maxZoom={24} maxNativeZoom={20}
+                pane={isCompareMode ? 'left-pane' : 'overlayPane'}
+              />
+            </LayersControl.Overlay>
+          )}
+
+          {/* ── Orthomosaïques — mission comparée (right-pane uniquement) ── */}
+          {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'tif' && (
+            <LayersControl.Overlay checked name="Ortho RGB (comparaison)">
+              <LayerGroup>
+                <GeoRasterRenderer missionId={compareId} orthoType="rgb" opacity={0.8} pane="right-pane" />
+              </LayerGroup>
+            </LayersControl.Overlay>
+          )}
+          {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'zip' && (
+            <LayersControl.Overlay checked name="Ortho RGB (comparaison)">
+              <TileLayer
+                url={`http://localhost:8000/tiles/${compareId}/rgb_tiles/{z}/{x}/{y}.png`}
+                maxZoom={24} maxNativeZoom={20} pane="right-pane"
+              />
+            </LayersControl.Overlay>
+          )}
+          {isCompareMode && compareId && compareMission?.ortho_formats?.thermal === 'tif' && (
+            <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
+              <LayerGroup>
+                <GeoRasterRenderer missionId={compareId} orthoType="thermal" opacity={0.8} pane="right-pane" />
+              </LayerGroup>
+            </LayersControl.Overlay>
+          )}
+          {isCompareMode && compareId && compareMission?.ortho_formats?.thermal === 'zip' && (
+            <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
+              <TileLayer
+                url={`http://localhost:8000/tiles/${compareId}/thermal_tiles/{z}/{x}/{y}.png`}
+                maxZoom={24} maxNativeZoom={20} pane="right-pane"
+              />
+            </LayersControl.Overlay>
+          )}
+
+          {/* ── Parcelles d'Oliviers — source unique, strictement isolée ── */}
+          {geojson && (
+            <LayersControl.Overlay checked name="Parcelles d'Oliviers">
+              <LayerGroup>
+                {renderMarkers(visibleFeatures, isCompareMode ? 'left-pane' : 'markerPane', true)}
+                {isCompareMode && renderMarkers(visibleCompareFeatures, 'right-pane', false)}
+              </LayerGroup>
+            </LayersControl.Overlay>
+          )}
+
         </LayersControl>
 
         {/* ── Secteurs K-Means : z410, au-dessus de l'ortho (z400), sous IDW (z420) ── */}
@@ -737,32 +921,33 @@ export default function TreeMap({
           </>
         )}
 
-        {renderMarkers(visibleFeatures, isCompareMode ? 'left-pane' : null, true)}
-        {isCompareMode && renderMarkers(visibleCompareFeatures, 'right-pane', false)}
       </MapContainer>
 
-      {/* ── Overlay split-screen ── */}
+      {/* ── Overlay split-screen — positions initiales à 50 %, mises à jour par DOM direct ── */}
       {isCompareMode && (
         <>
           {currentLabel && (
             <div
+              id="split-label-left"
               className="split-label"
-              style={{ left: `${splitPos / 2}%`, transform: 'translateX(-50%)' }}
+              style={{ left: '25%', transform: 'translateX(-50%)' }}
             >
               {currentLabel}
             </div>
           )}
           {compareLabel && (
             <div
+              id="split-label-right"
               className="split-label"
-              style={{ left: `${splitPos + (100 - splitPos) / 2}%`, transform: 'translateX(-50%)' }}
+              style={{ left: '75%', transform: 'translateX(-50%)' }}
             >
               {compareLabel}
             </div>
           )}
           <div
+            id="split-divider"
             className="split-divider"
-            style={{ left: `calc(${splitPos}% - 2px)` }}
+            style={{ left: 'calc(50% - 2px)' }}
             onMouseDown={e => { e.preventDefault(); isDragging.current = true }}
           >
             <div className="split-handle">⇔</div>

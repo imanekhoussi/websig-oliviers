@@ -6,17 +6,18 @@ import TreeMap        from './components/TreeMap'
 import StatsPanel     from './components/StatsPanel'
 import Legend         from './components/Legend'
 import TrendPanel     from './components/TrendPanel'
-import MissionSelector, { MissionUploadZone } from './components/MissionSelector'
+import MissionSelector from './components/MissionSelector'
+import MissionManager  from './components/MissionManager'
 import { StatsSkeleton } from './components/Skeleton'
 import { STRESS_COLORS } from './constants'
 import MCDAPanel from './components/MCDAPanel'
 import {
   LuDroplets, LuTriangleAlert, LuMap, LuRoute,
-  LuSlidersHorizontal, LuSatellite, LuTrendingUp,
+  LuSlidersHorizontal, LuSatellite, LuTrendingUp, LuSettings,
 } from 'react-icons/lu'
 
 
-const STRESS_LEVELS = ['aucun', 'faible', 'modere', 'eleve', 'severe']
+const STRESS_LEVELS = ['faible', 'modere', 'eleve', 'severe']
 
 /** Recalcule les stats serveur-équivalentes sur un sous-ensemble de features */
 function computeZonalStats(features) {
@@ -77,6 +78,7 @@ function Dashboard() {
   const [activeStress, setActiveStress] = useState([...STRESS_LEVELS])
   const [isCompareMode, setIsCompareMode] = useState(false)
   const [compareId, setCompareId]         = useState(null)
+  const [showManager,  setShowManager]    = useState(false)
   const [showHotspots, setShowHotspots]   = useState(false)
   const [selectedTrees, setSelectedTrees] = useState(null)
   const [showIDW, setShowIDW]             = useState(false)
@@ -114,7 +116,7 @@ function Dashboard() {
   // Calcul des indices de vulnérabilité MCDA (AHP) en temps réel
   const mcdaScores = useMemo(() => {
     if (!showMCDA || !geojson?.features?.length) return {}
-    const stressScore = { aucun: 0, faible: 25, modere: 50, eleve: 75, severe: 100 }
+    const stressScore = { faible: 25, modere: 50, eleve: 75, severe: 100 }
     const heights = geojson.features.map(f => f.properties.hauteur).filter(h => h != null)
     const maxH = heights.length ? Math.max(...heights) : 1
     const scores = {}
@@ -127,9 +129,12 @@ function Dashboard() {
     return scores
   }, [showMCDA, geojson, weightStress, weightHeight])
 
-  const visibleCount = geojson?.features.filter(
-    f => activeStress.includes(f.properties.stress || 'inconnu')
-  ).length ?? 0
+  const KNOWN_STRESS = new Set(['faible', 'modere', 'eleve', 'severe'])
+  const visibleCount = geojson?.features.filter(f => {
+    const s = f.properties.stress
+    if (!s || !KNOWN_STRESS.has(s)) return true   // inconnu → toujours compté visible
+    return activeStress.includes(s)
+  }).length ?? 0
 
   function handleSelect(id) {
     setCurrentId(id)
@@ -173,8 +178,17 @@ function Dashboard() {
             missions={missions}
             currentId={currentId}
             onSelect={handleSelect}
-            onRefresh={refresh}
           />
+
+          <span className="header-sep" />
+
+          <button
+            className={`btn-header-manage${showManager ? ' active' : ''}`}
+            onClick={() => setShowManager(v => !v)}
+            title="Gérer les missions"
+          >
+            <LuSettings size={14} /> Gérer les missions
+          </button>
 
           <span className="header-sep" />
 
@@ -233,10 +247,6 @@ function Dashboard() {
               weightHeight={weightHeight}
               onChange={(wS, wH) => { setWeightStress(wS); setWeightHeight(wH) }}
             />
-          )}
-
-          {currentMission && !currentMission.has_shapefile && (
-            <MissionUploadZone missionId={currentId} onUploaded={refresh} />
           )}
 
           {dataLoading
@@ -304,6 +314,8 @@ function Dashboard() {
           currentLabel={currentMission ? (currentMission.nom || currentMission.id) + ' · ' + currentMission.date : ''}
           compareLabel={compareMission ? (compareMission.nom || compareMission.id) + ' · ' + compareMission.date : ''}
           currentId={currentId}
+          currentMission={currentMission ?? null}
+          compareMission={compareMission ?? null}
           showHotspots={showHotspots}
           setSelectedTrees={setSelectedTrees}
           selectedTrees={selectedTrees}
@@ -353,6 +365,17 @@ function Dashboard() {
           />
         </div>
       </aside>
+
+      {showManager && (
+        <MissionManager
+          missions={missions}
+          onRefresh={refresh}
+          onClose={() => setShowManager(false)}
+          onMissionDeleted={(deletedId) => {
+            if (currentId === deletedId) setCurrentId(null)
+          }}
+        />
+      )}
 
     </div>
   )

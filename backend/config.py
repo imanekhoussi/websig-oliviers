@@ -16,20 +16,19 @@ SOURCE_CRS = "EPSG:32629"
 # CRS pour affichage web (Leaflet utilise WGS84)
 WEB_CRS = "EPSG:4326"
 
-# Seuils CWSI pour classification stress (à ajuster selon Bian 2019 / tes résultats)
+# Seuils CWSI — 4 classes. Bornes extrêmes larges pour absorber
+# les valeurs aberrantes (CWSI négatif = surplus hydrique, CWSI > 1 = erreur capteur).
 CWSI_THRESHOLDS = {
-    "aucun": (0.0, 0.2),        # Pas de stress
-    "faible": (0.2, 0.4),       # Stress faible
-    "modere": (0.4, 0.6),       # Stress modéré
-    "eleve": (0.6, 0.8),        # Stress élevé
-    "severe": (0.8, 1.01),      # Stress sévère
+    "faible": (-99.0, 0.25),  # < 0.25 (inclut valeurs négatives)
+    "modere": ( 0.25, 0.50),
+    "eleve":  ( 0.50, 0.75),
+    "severe": ( 0.75, 99.0),  # ≥ 0.75 (inclut valeurs > 1)
 }
 
 # Couleurs par niveau de stress (utilisées côté frontend aussi)
 STRESS_COLORS = {
-    "aucun": "#2ecc71",    # vert
     "faible": "#f1c40f",   # jaune
     "modere": "#e67e22",   # orange
-    "eleve": "#e74c3c",    # rouge
+    "eleve":  "#e74c3c",   # rouge
     "severe": "#8e44ad",   # violet
 }

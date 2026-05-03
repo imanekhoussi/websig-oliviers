@@ -1,6 +1,6 @@
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 
-const NIVEAUX = ['aucun', 'faible', 'modere', 'eleve', 'severe']
+const NIVEAUX = ['faible', 'modere', 'eleve', 'severe']
 
 export default function Legend({ activeStress, onToggle, visibleCount, stressCounts }) {
   const isInteractive = !!onToggle
