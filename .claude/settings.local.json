@@ -11,7 +11,8 @@
       "Bash(C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\venv\\\\Scripts\\\\pip.exe install *)",
       "Bash(\"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\venv\\\\Scripts\\\\pip.exe\" install *)",
       "Bash(\"venv\\\\Scripts\\\\python.exe\" -c \"from fpdf import FPDF; from config import STRESS_COLORS; print\\('imports OK'\\); print\\('STRESS_COLORS:', STRESS_COLORS\\)\")",
-      "Bash('venv\\\\Scripts\\\\python.exe' -c ' *)"
+      "Bash('venv\\\\Scripts\\\\python.exe' -c ' *)",
+      "Bash(node -e \"const icons = require\\('./node_modules/react-icons/lu/index.cjs'\\); const matches = Object.keys\\(icons\\).filter\\(k => k.toLowerCase\\(\\).includes\\('scatter'\\) || k.toLowerCase\\(\\).includes\\('chart'\\) || k.toLowerCase\\(\\).includes\\('dot'\\) || k.toLowerCase\\(\\).includes\\('plot'\\)\\); console.log\\(matches.slice\\(0,20\\)\\)\")"
     ]
   }
 }

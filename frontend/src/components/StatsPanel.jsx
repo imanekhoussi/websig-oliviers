@@ -3,11 +3,46 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, CartesianGrid,
   AreaChart, Area, ReferenceLine,
+  ScatterChart, Scatter, ZAxis,
 } from 'recharts'
 import * as turf from '@turf/turf'
-import { STRESS_LABELS } from '../constants'
+import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import { exportXlsxUrl, exportPdfUrl } from '../api'
-import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind } from 'react-icons/lu'
+import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind, LuGitBranchPlus } from 'react-icons/lu'
+
+// ── Coefficients culturaux FAO-56 par stade phénologique — oliviers ──────────
+const KC_BY_STAGE = { hiver: 0.45, printemps: 0.65, ete: 0.70 }
+
+// ── Profils agronomiques par type de sol ─────────────────────────────────────
+const SOIL_PROFILES = {
+  sableux: {
+    label:  'Sableux',
+    freq:   'Tous les 2–3 jours',
+    color:  '#f59e0b',
+    bg:     'rgba(245,158,11,0.08)',
+    advice: 'Faible capacité de rétention hydrique. Fractionner les apports en plusieurs petits tours d\'eau pour éviter le lessivage des nutriments en profondeur. Privilégier le goutte-à-goutte basse pression.',
+  },
+  limoneux: {
+    label:  'Limoneux',
+    freq:   'Tous les 4–5 jours',
+    color:  '#3b82f6',
+    bg:     'rgba(59,130,246,0.08)',
+    advice: 'Rétention équilibrée, bonne disponibilité en eau. Apports réguliers et modérés recommandés. Surveiller la compaction de surface qui peut réduire l\'infiltration après irrigation par aspersion.',
+  },
+  argileux: {
+    label:  'Argileux',
+    freq:   'Tous les 6–8 jours',
+    color:  '#10b981',
+    bg:     'rgba(16,185,129,0.08)',
+    advice: 'Fort pouvoir de rétention — risque d\'asphyxie racinaire en cas de sur-irrigation. Espacer les apports, s\'assurer d\'un bon drainage, et surveiller le CWSI avant toute décision d\'irrigation.',
+  },
+}
+
+const SOIL_TYPES = [
+  { value: 'sableux',  label: 'Sableux'  },
+  { value: 'limoneux', label: 'Limoneux' },
+  { value: 'argileux', label: 'Argileux' },
+]
 
 /* Tooltip glassmorphism partagé */
 function GlassTip({ active, payload, label, formatter }) {
@@ -43,6 +78,29 @@ function CwsiTip(props) {
   return <GlassTip {...props} />
 }
 
+function ScatterTip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const d = payload[0]?.payload
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.97)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      border: '1px solid rgba(203,213,225,0.8)',
+      borderRadius: 8,
+      padding: '7px 11px',
+      fontSize: 12,
+      color: '#0f172a',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+      lineHeight: 1.7,
+    }}>
+      <div style={{ color: '#64748b', marginBottom: 2 }}>Olivier #{d?.id ?? '—'}</div>
+      <div>Hauteur : <b>{d?.hauteur?.toFixed(1)} m</b></div>
+      <div>CWSI : <b style={{ color: d?.color }}>{d?.cwsi?.toFixed(3)}</b></div>
+    </div>
+  )
+}
+
 function CherguiTip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
@@ -73,7 +131,11 @@ function ForecastTip(props) {
   return <GlassTip {...props} formatter={v => `${v} m³`} />
 }
 
-export default function StatsPanel({ stats, mission, statsCompare, missionCompare, isZonalActive = false, onClearZonal, features }) {
+export default function StatsPanel({
+  stats, mission, statsCompare, missionCompare,
+  isZonalActive = false, onClearZonal, features,
+  allFeatures = [],   // toutes les features visibles (post-filtrage) — scatter plot
+}) {
   const isCompare = !!(statsCompare && missionCompare)
   const [waterCostPerM3,       setWaterCostPerM3]       = useState(0)
   const [energyKwhPerM3,       setEnergyKwhPerM3]       = useState(0.75)
@@ -83,6 +145,10 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
   const [isFetchingMeteo,      setIsFetchingMeteo]      = useState(false)
   const [cherguiData,          setCherguiData]          = useState(null)
   const [isLoadingChergui,     setIsLoadingChergui]     = useState(false)
+  // Stade phénologique — détermine le Kc dynamique FAO-56
+  const [phenoStage, setPhenoStage] = useState('printemps')
+  // Type de sol — paramètre du modèle agronomique (local au bilan hydrique)
+  const [soilType, setSoilType]     = useState('limoneux')
 
   // ET0 + prévisions J+7 — Penman-Monteith FAO-56 via Open-Meteo
   useEffect(() => {
@@ -97,10 +163,12 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
 
   const todayEt0 = forecastData?.et0_fao_evapotranspiration?.[0] ?? 4.0
 
-  // Bilan hydrique FAO-56 — CWSI continu, efficience système, ET0 dynamique
+  // Kc dynamique selon le stade phénologique sélectionné — FAO-56 oliviers
+  const kc = KC_BY_STAGE[phenoStage] ?? 0.65
+
+  // Bilan hydrique FAO-56 — CWSI continu, efficience système, ET0 dynamique, Kc phénologique
   const totalDeficitM3 = useMemo(() => {
     if (!isZonalActive || !features?.length) return 0
-    const kc        = 0.65
     const etcWeekly = todayEt0 * kc * 7                             // mm/semaine (ET0 × Kc × 7j)
     let totalLiters = 0
     features.forEach(feat => {
@@ -112,9 +180,9 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
       totalLiters += volumeBrut_Liters
     })
     return (totalLiters / 1000).toFixed(2)                          // → m³/semaine
-  }, [isZonalActive, features, todayEt0, irrigationEfficiency])
+  }, [isZonalActive, features, todayEt0, irrigationEfficiency, kc])
 
-  // Données J+7 pour le graphique de prévision
+  // Données J+7 pour le graphique de prévision (Kc dynamique)
   const projectionChartData = useMemo(() => {
     if (!isZonalActive || !features?.length || !forecastData) return []
     let totalArea = 0
@@ -125,10 +193,25 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
       const et0 = forecastData.et0_fao_evapotranspiration?.[i] ?? 0
       const d = new Date(isoDate)
       const dateCourte = `${d.getDate()} ${MOIS_FR[d.getMonth()]}`
-      const besoinLiters = (totalArea * et0 * 0.65) / irrigationEfficiency
+      const besoinLiters = (totalArea * et0 * kc) / irrigationEfficiency
       return { date: dateCourte, besoinM3: parseFloat((besoinLiters / 1000).toFixed(2)), et0 }
     })
-  }, [isZonalActive, features, forecastData, irrigationEfficiency])
+  }, [isZonalActive, features, forecastData, irrigationEfficiency, kc])
+
+  // ── Données scatter plot (Hauteur × CWSI) ────────────────────────────────
+  // Affiche les arbres de la sélection zonale si active, sinon toutes les features.
+  const scatterData = useMemo(() => {
+    const source = isZonalActive ? (features ?? []) : allFeatures
+    return source
+      .filter(f => f.properties.hauteur != null && f.properties.cwsi != null)
+      .map(f => ({
+        id:     f.properties.id,
+        hauteur: f.properties.hauteur,
+        cwsi:    f.properties.cwsi,
+        color:   STRESS_COLORS[f.properties.stress] || STRESS_COLORS.inconnu,
+        stress:  f.properties.stress,
+      }))
+  }, [isZonalActive, features, allFeatures])
 
   // Analyse Chergui inter-missions — fetch Open-Meteo Archive
   useEffect(() => {
@@ -205,31 +288,38 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
       {/* ── Infos mission ── */}
       <div className="mission-info">
         <div className="mission-info-header">
-          <div>
-            <h2>{mission.nom || mission.id}</h2>
+
+          {/* Titre + badge statut */}
+          <div className="mission-info-meta">
+            <div className="mission-title-row">
+              <h2 className="mission-title">{mission.nom || mission.id}</h2>
+              <span className="mission-status-badge">Terminée</span>
+            </div>
             <div className="mission-date">{mission.date}</div>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
+
+          {/* Boutons export — flex-wrap empêche le débordement */}
+          <div className="mission-export-actions">
             <a
               href={exportXlsxUrl(mission.id, features?.map(f => f.properties.id))}
               download
-              className="btn-export-csv"
+              className="btn-export-xlsx"
               title={isZonalActive ? 'Exporter la sélection (Excel)' : 'Télécharger le rapport complet (Excel)'}
             >
-              {isZonalActive ? '📊 Export sélection' : '📊 Rapport Excel'}
+              📊 {isZonalActive ? 'Sélection' : 'Excel'}
             </a>
             {!isZonalActive && (
               <a
                 href={exportPdfUrl(mission.id)}
                 download
-                className="btn-export-csv"
+                className="btn-export-pdf"
                 title="Télécharger le rapport PDF"
-                style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', borderColor: 'rgba(239,68,68,0.25)' }}
               >
-                📄 Rapport PDF
+                📄 PDF
               </a>
             )}
           </div>
+
         </div>
         {mission.notes && <p className="notes">{mission.notes}</p>}
         {mission.meteo && (mission.meteo.temp_air != null || mission.meteo.humidite != null) && (
@@ -430,6 +520,65 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
         </ResponsiveContainer>
       </div>
 
+      {/* ── Scatter Plot Hauteur × CWSI ── */}
+      {scatterData.length >= 2 && (
+        <>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <LuGitBranchPlus size={14} style={{ color: 'var(--primary)' }} />
+            Corrélation Hauteur / CWSI
+          </h3>
+          <div style={{ width: '100%', height: 200 }}>
+            <ResponsiveContainer>
+              <ScatterChart margin={{ top: 6, right: 10, left: -10, bottom: 6 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.3)" />
+                <XAxis
+                  dataKey="hauteur"
+                  type="number"
+                  name="Hauteur"
+                  unit=" m"
+                  fontSize={11}
+                  tick={{ fill: '#94a3b8' }}
+                  tickLine={false}
+                  axisLine={{ stroke: 'rgba(148,163,184,0.15)' }}
+                  domain={['auto', 'auto']}
+                />
+                <YAxis
+                  dataKey="cwsi"
+                  type="number"
+                  name="CWSI"
+                  domain={[0, 1]}
+                  fontSize={11}
+                  tick={{ fill: '#94a3b8' }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={28}
+                />
+                <ZAxis range={[28, 28]} />
+                <Tooltip content={<ScatterTip />} cursor={{ strokeDasharray: '3 3' }} />
+                <Scatter
+                  data={scatterData}
+                  shape={(props) => {
+                    const { cx, cy, payload } = props
+                    return (
+                      <circle
+                        cx={cx} cy={cy} r={5}
+                        fill={payload.color}
+                        fillOpacity={0.82}
+                        stroke="white"
+                        strokeWidth={1}
+                      />
+                    )
+                  }}
+                />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+          <p style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: '0 4px 4px', lineHeight: 1.5 }}>
+            Chaque point = un olivier · couleur = niveau de stress
+          </p>
+        </>
+      )}
+
       {/* ── Plages ── */}
       <div className="range-info">
         <small>
@@ -450,6 +599,41 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
                 {isFetchingMeteo && <span className="wb-meteo-badge">⏳ Météo…</span>}
               </span>
               <span className="wb-deficit">{totalDeficitM3} m³ / sem.</span>
+            </div>
+
+            {/* ── Stade phénologique → Kc dynamique ── */}
+            <div className="wb-row">
+              <label className="wb-label" htmlFor="pheno-stage">Stade phénologique</label>
+              <select
+                id="pheno-stage"
+                className="wb-select"
+                value={phenoStage}
+                onChange={e => setPhenoStage(e.target.value)}
+              >
+                <option value="hiver">Hiver (Kc = 0.45)</option>
+                <option value="printemps">Printemps / Floraison (Kc = 0.65)</option>
+                <option value="ete">Été / Développement noyau (Kc = 0.70)</option>
+              </select>
+            </div>
+
+            {/* ── Type de sol — paramètre agronomique, pas un filtre spatial ── */}
+            <div className="wb-row">
+              <label className="wb-label">Type de sol</label>
+              <div className="wb-soil-chips">
+                {SOIL_TYPES.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    className={`wb-soil-chip${soilType === value ? ' active' : ''}`}
+                    onClick={() => setSoilType(value)}
+                    style={soilType === value
+                      ? { borderColor: SOIL_PROFILES[value].color, background: SOIL_PROFILES[value].bg, color: SOIL_PROFILES[value].color }
+                      : undefined
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="wb-row">
@@ -512,9 +696,19 @@ export default function StatsPanel({ stats, mission, statsCompare, missionCompar
               </span>
             </div>
 
+            {/* ── Conseil agronomique conditionnel selon le type de sol ── */}
+            {SOIL_PROFILES[soilType] && (
+              <div className="wb-soil-advisory" style={{ borderLeftColor: SOIL_PROFILES[soilType].color }}>
+                <div className="wb-soil-advisory-header" style={{ color: SOIL_PROFILES[soilType].color }}>
+                  <span className="wb-soil-advisory-pill">{SOIL_PROFILES[soilType].label}</span>
+                  <span className="wb-soil-advisory-freq">· {SOIL_PROFILES[soilType].freq}</span>
+                </div>
+                <p className="wb-soil-advisory-text">{SOIL_PROFILES[soilType].advice}</p>
+              </div>
+            )}
+
             <p className="wb-footnote">
-              ET0 dynamique : {todayEt0} mm/j (Penman-Monteith, Open-Meteo) · Aire géodésique WGS84 ·
-              CWSI continu · Kc oliviers = 0.65 · Prescrit une irrigation de maintien.
+              ET0 : {todayEt0} mm/j (Penman-Monteith, Open-Meteo) · Kc = {kc.toFixed(2)} ({phenoStage === 'hiver' ? 'Hiver' : phenoStage === 'printemps' ? 'Printemps' : 'Été'})
             </p>
           </div>
 

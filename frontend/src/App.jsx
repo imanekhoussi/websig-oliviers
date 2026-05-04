@@ -88,6 +88,12 @@ function Dashboard() {
   const [weightStress, setWeightStress]   = useState(60)
   const [weightHeight, setWeightHeight]   = useState(40)
 
+  // ── Filtres cross-critères (état global → source unique pour carte + stats) ─
+  // null = inactif (toutes les valeurs passent) ; [min, max] = filtre actif.
+  const [filterHauteur, setFilterHauteur] = useState(null)
+  const [filterTemp,    setFilterTemp]    = useState(null)
+  const [filterCwsi,    setFilterCwsi]    = useState(null)
+
   // Auto-sélectionne la première mission avec données au premier chargement
   const didInit = useRef(false)
   useEffect(() => {
@@ -106,12 +112,49 @@ function Dashboard() {
   const compareMission = missions.find(m => m.id === compareId)
   const hasMapData = currentMission?.has_shapefile && geojson
 
-  // Stats zonales : recalculées côté client sur le sous-ensemble sélectionné
+  // ── Bornes réelles des données — alimentent MapFilterOverlay ───────────────
+  const dataRanges = useMemo(() => {
+    const fallback = { hauteur: [0, 20], temp: [0, 60], cwsi: [0, 1] }
+    if (!geojson?.features?.length) return fallback
+    const hs = geojson.features.map(f => f.properties.hauteur).filter(v => v != null)
+    const ts = geojson.features.map(f => f.properties.temp_moy).filter(v => v != null)
+    const cs = geojson.features.map(f => f.properties.cwsi).filter(v => v != null)
+    return {
+      hauteur: hs.length ? [Math.floor(Math.min(...hs)),  Math.ceil(Math.max(...hs))]  : fallback.hauteur,
+      temp:    ts.length ? [Math.floor(Math.min(...ts)),  Math.ceil(Math.max(...ts))]  : fallback.temp,
+      cwsi:    cs.length ? [+Math.min(...cs).toFixed(2), +Math.max(...cs).toFixed(2)] : fallback.cwsi,
+    }
+  }, [geojson])
+
+  // ── GeoJSON filtré — source unique pour carte ET stats ─────────────────────
+  const filteredGeojson = useMemo(() => {
+    if (!geojson?.features?.length) return geojson
+    if (!filterHauteur && !filterTemp && !filterCwsi) return geojson
+    const features = geojson.features.filter(f => {
+      const { hauteur, temp_moy, cwsi } = f.properties
+      if (filterHauteur && hauteur  != null && (hauteur  < filterHauteur[0] || hauteur  > filterHauteur[1])) return false
+      if (filterTemp    && temp_moy != null && (temp_moy < filterTemp[0]    || temp_moy > filterTemp[1]))    return false
+      if (filterCwsi    && cwsi     != null && (cwsi     < filterCwsi[0]    || cwsi     > filterCwsi[1]))    return false
+      return true
+    })
+    return { ...geojson, features }
+  }, [geojson, filterHauteur, filterTemp, filterCwsi])
+
+  // ── Stats zonales : recalculées côté client sur le sous-ensemble sélectionné
   const zonalStats = useMemo(
     () => selectedTrees ? computeZonalStats(selectedTrees) : null,
     [selectedTrees]
   )
-  const displayStats = zonalStats ?? stats
+  // Quand les filtres cross-critères sont actifs (sans sélection zonale),
+  // on recalcule les stats sur le sous-ensemble filtré.
+  const advancedFilterStats = useMemo(() => {
+    if (selectedTrees || filteredGeojson === geojson) return null
+    return filteredGeojson?.features?.length
+      ? computeZonalStats(filteredGeojson.features)
+      : null
+  }, [filteredGeojson, geojson, selectedTrees])
+
+  const displayStats = zonalStats ?? advancedFilterStats ?? stats
 
   // Calcul des indices de vulnérabilité MCDA (AHP) en temps réel
   const mcdaScores = useMemo(() => {
@@ -140,7 +183,16 @@ function Dashboard() {
     setCurrentId(id)
     setActiveStress([...STRESS_LEVELS])
     setSelectedTrees(null)
+    setFilterHauteur(null)
+    setFilterTemp(null)
+    setFilterCwsi(null)
     if (id === compareId) setCompareId(null)
+  }
+
+  function resetFilters() {
+    setFilterHauteur(null)
+    setFilterTemp(null)
+    setFilterCwsi(null)
   }
 
   function toggleStress(level) {
@@ -230,7 +282,9 @@ function Dashboard() {
             Missions & Statistiques
           </span>
         </div>
+
         <div className="panel-float-body">
+
           {hasMapData && (
             <button
               className={`btn-mcda${showMCDA ? ' active' : ''}`}
@@ -259,6 +313,7 @@ function Dashboard() {
                 isZonalActive={selectedTrees !== null}
                 onClearZonal={() => setSelectedTrees(null)}
                 features={selectedTrees}
+                allFeatures={filteredGeojson?.features ?? []}
               />
           }
 
@@ -307,7 +362,7 @@ function Dashboard() {
       {/* ── CARTE CENTRALE ── */}
       <main className="col-map">
         <TreeMap
-          geojson={geojson}
+          geojson={filteredGeojson}
           activeStress={activeStress}
           isCompareMode={isCompareMode}
           geojsonCompare={geojsonCompare}
@@ -324,6 +379,15 @@ function Dashboard() {
           showMCDA={showMCDA}
           mcdaScores={mcdaScores}
           showSectors={showSectors}
+          dataRanges={dataRanges}
+          filterHauteur={filterHauteur}
+          filterTemp={filterTemp}
+          filterCwsi={filterCwsi}
+          onHauteurChange={setFilterHauteur}
+          onTempChange={setFilterTemp}
+          onCwsiChange={setFilterCwsi}
+          onFilterReset={resetFilters}
+          totalCount={geojson?.features?.length ?? 0}
         />
 
         {/* Indicateurs quand aucune donnée */}

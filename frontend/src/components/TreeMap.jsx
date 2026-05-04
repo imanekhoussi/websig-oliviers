@@ -12,6 +12,7 @@ import {
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import { fetchTreeHistory } from '../api'
 import { LuThermometer, LuRuler, LuDroplet, LuFootprints } from 'react-icons/lu'
+import MapFilterOverlay from './MapFilterOverlay'
 
 const DEFAULT_CENTER = [35.76, -5.83]
 const DEFAULT_ZOOM   = 7
@@ -411,6 +412,16 @@ export default function TreeMap({
   showMCDA = false,
   mcdaScores = {},
   showSectors = false,
+  // ── filtres cross-critères ──────────────────────────
+  dataRanges    = { hauteur: [0, 20], temp: [0, 60], cwsi: [0, 1] },
+  filterHauteur = null,
+  filterTemp    = null,
+  filterCwsi    = null,
+  onHauteurChange = () => {},
+  onTempChange    = () => {},
+  onCwsiChange    = () => {},
+  onFilterReset   = () => {},
+  totalCount    = 0,
 }) {
   const compareId = compareMission?.id ?? null
 
@@ -423,6 +434,85 @@ export default function TreeMap({
   const isDragging  = useRef(false)
   const wrapperRef  = useRef(null)
   const mapRef      = useRef(null)   // instance Leaflet Map
+
+  // ── Web Worker — géotraitements asynchrones (IDW, K-Means, TSP) ───────────
+  // Le worker tourne dans un thread V8 séparé : aucun blocage du Main Thread.
+  const workerRef    = useRef(null)
+  // Compteurs de requêtes par type — permet de rejeter les résultats obsolètes.
+  const latestReqId  = useRef({ IDW: 0, KMEANS: 0, TSP: 0 })
+
+  // Résultats géospatiaux issus du worker (remplacent les anciens useMemo)
+  const [idwGrid,       setIdwGrid]       = useState(null)
+  const [routeResult,   setRouteResult]   = useState(null)
+  const [sectorPolygons, setSectorPolygons] = useState(null)
+  // Ensemble des calculs en cours — alimente l'overlay "Calcul spatial en cours…"
+  const [pendingCalcs, setPendingCalcs]   = useState(new Set())
+
+  // Initialise le worker une fois au montage ; le termine au démontage.
+  useEffect(() => {
+    const w = new Worker(
+      new URL('../workers/geoWorker.js', import.meta.url),
+      { type: 'module' }
+    )
+    workerRef.current = w
+
+    w.onmessage = ({ data: { type, result, reqId } }) => {
+      if (type === 'IDW_RESULT' && reqId === latestReqId.current.IDW) {
+        setIdwGrid(result)
+        setPendingCalcs(s => { const n = new Set(s); n.delete('IDW'); return n })
+      } else if (type === 'KMEANS_RESULT' && reqId === latestReqId.current.KMEANS) {
+        setSectorPolygons(result)
+        setPendingCalcs(s => { const n = new Set(s); n.delete('KMEANS'); return n })
+      } else if (type === 'TSP_RESULT' && reqId === latestReqId.current.TSP) {
+        setRouteResult(result)
+        setPendingCalcs(s => { const n = new Set(s); n.delete('TSP'); return n })
+      }
+      // Les résultats avec un reqId inférieur au dernier connu sont silencieusement ignorés.
+    }
+
+    w.onerror = (e) => console.error('[geoWorker]', e.message)
+
+    return () => w.terminate()
+  }, [])
+
+  // Déclenche le calcul IDW dans le worker quand showIDW ou les données changent.
+  useEffect(() => {
+    if (!showIDW || !geojson?.features?.length) {
+      latestReqId.current.IDW++          // invalide tout résultat en vol
+      setIdwGrid(null)
+      setPendingCalcs(s => { const n = new Set(s); n.delete('IDW'); return n })
+      return
+    }
+    const reqId = ++latestReqId.current.IDW
+    setPendingCalcs(s => new Set(s).add('IDW'))
+    workerRef.current?.postMessage({ type: 'IDW', payload: { geojson }, reqId })
+  }, [showIDW, geojson])
+
+  // Déclenche le calcul K-Means dans le worker.
+  useEffect(() => {
+    if (!showSectors || !geojson?.features?.length) {
+      latestReqId.current.KMEANS++
+      setSectorPolygons(null)
+      setPendingCalcs(s => { const n = new Set(s); n.delete('KMEANS'); return n })
+      return
+    }
+    const reqId = ++latestReqId.current.KMEANS
+    setPendingCalcs(s => new Set(s).add('KMEANS'))
+    workerRef.current?.postMessage({ type: 'KMEANS', payload: { geojson, activeStress }, reqId })
+  }, [showSectors, geojson, activeStress])
+
+  // Déclenche le calcul TSP (Nearest Neighbor) dans le worker.
+  useEffect(() => {
+    if (!showRoute || !geojson?.features?.length) {
+      latestReqId.current.TSP++
+      setRouteResult(null)
+      setPendingCalcs(s => { const n = new Set(s); n.delete('TSP'); return n })
+      return
+    }
+    const reqId = ++latestReqId.current.TSP
+    setPendingCalcs(s => new Set(s).add('TSP'))
+    workerRef.current?.postMessage({ type: 'TSP', payload: { geojson }, reqId })
+  }, [showRoute, geojson])
 
   const fetchHistory = useCallback((treeId) => {
     if (treeId == null || historyCache.current[treeId]) return
@@ -485,6 +575,7 @@ export default function TreeMap({
   }, [])
 
   // ── Calcul des hotspots (buffer + union des arbres critiques) ──
+  // Reste en useMemo car c'est un calcul léger (pas de clustering, pas d'IDW).
   const hotspotPolygons = useMemo(() => {
     if (!showHotspots || !geojson?.features?.length) return null
 
@@ -493,131 +584,16 @@ export default function TreeMap({
     )
     if (!critical.length) return null
 
-    const fc = turf.featureCollection(critical)
+    const fc       = turf.featureCollection(critical)
     const buffered = turf.buffer(fc, 15, { units: 'meters' })
     if (!buffered?.features?.length) return null
 
-    // Union itératif pour fusionner tous les buffers en zones continues
     const merged = buffered.features.reduce((acc, feat) =>
       acc ? turf.union(turf.featureCollection([acc, feat])) : feat
     , null)
 
     return merged ? turf.featureCollection([merged]) : null
   }, [showHotspots, geojson])
-
-  // ── Grille IDW (Inverse Distance Weighting sur le CWSI) ──
-  const idwGrid = useMemo(() => {
-    if (!showIDW || !geojson?.features?.length) return null
-
-    // A — Arbres avec CWSI valide uniquement
-    const withCwsi = geojson.features.filter(f => f.properties.cwsi != null)
-    if (withCwsi.length < 3) return null   // min 3 points pour interpoler
-
-    // B — Centroïde de chaque arbre (Point ou Polygon) + propriété cwsi
-    const points = withCwsi.map(f => {
-      const pt = turf.centroid(f)
-      pt.properties = { cwsi: f.properties.cwsi }
-      return pt
-    })
-    const fc = turf.featureCollection(points)
-
-    // C & D — Interpolation IDW sur une grille de 10 m
-    try {
-      return turf.interpolate(fc, 10, {
-        gridType: 'square',
-        property: 'cwsi',
-        units:    'meters',
-        weight:   2,
-      })
-    } catch {
-      return null
-    }
-  }, [showIDW, geojson])
-
-  // ── Itinéraire Nearest-Neighbor sur les arbres sévères ──
-  const routeResult = useMemo(() => {
-    if (!showRoute || !geojson?.features?.length) return null
-
-    // 1 — Filtre les arbres en stress sévère
-    const severe = geojson.features.filter(f => f.properties.stress === 'severe')
-    if (severe.length < 2) return null
-
-    // 2 — Centroïdes (Points ou Polygones → toujours un point)
-    const pts = severe.map(f => {
-      const pt = turf.centroid(f)
-      pt.properties = { ...f.properties }
-      return pt
-    })
-
-    // 3 — Greedy Nearest Neighbor (TSP approché)
-    let unvisited  = [...pts]
-    let current    = unvisited.shift()           // premier arbre = départ
-    const ordered  = [current]
-
-    while (unvisited.length > 0) {
-      const nearest = turf.nearestPoint(current, turf.featureCollection(unvisited))
-      ordered.push(nearest)
-      const idx = unvisited.findIndex(
-        p => p.geometry.coordinates[0] === nearest.geometry.coordinates[0] &&
-             p.geometry.coordinates[1] === nearest.geometry.coordinates[1]
-      )
-      unvisited.splice(idx, 1)
-      current = nearest
-    }
-
-    // 4 — Ligne de l'itinéraire
-    const pathCoords = ordered.map(p => p.geometry.coordinates)
-    const line = turf.lineString(pathCoords)
-
-    // 5 — Point de départ (pour le marqueur visuel)
-    const start = pathCoords[0]
-
-    return { line, start, count: ordered.length }
-  }, [showRoute, geojson])
-
-  // ── Sectorisation K-Means (3 secteurs d'irrigation) ──
-  const sectorPolygons = useMemo(() => {
-    if (!showSectors || !geojson?.features?.length) return null
-
-    const filtered = geojson.features.filter(
-      f => activeStress.includes(f.properties.stress || 'inconnu')
-    )
-    if (filtered.length < 3) return null
-
-    // A — Centroïdes en FeatureCollection de Points
-    const points = turf.featureCollection(
-      filtered.map(f => {
-        const pt = turf.centroid(f)
-        pt.properties = { ...f.properties }
-        return pt
-      })
-    )
-
-    // B — Clustering K-Means (3 secteurs)
-    let clustered
-    try {
-      clustered = turf.clustersKmeans(points, { numberOfClusters: 3 })
-    } catch {
-      return null
-    }
-
-    // C — Enveloppe convexe + buffer 5 m par cluster
-    const polygons = []
-    for (let i = 0; i < 3; i++) {
-      const clusterPts = turf.featureCollection(
-        clustered.features.filter(f => f.properties.cluster === i)
-      )
-      if (clusterPts.features.length < 3) continue
-      const hull = turf.convex(clusterPts)
-      if (!hull) continue
-      const buffered = turf.buffer(hull, 5, { units: 'meters' })
-      if (!buffered) continue
-      buffered.properties = { cluster_id: i }
-      polygons.push(buffered)
-    }
-
-    return polygons.length > 0 ? turf.featureCollection(polygons) : null
-  }, [showSectors, geojson, activeStress])
 
   // Set des IDs sélectionnés pour lookup O(1)
   const selectedIds = useMemo(
@@ -922,6 +898,33 @@ export default function TreeMap({
         )}
 
       </MapContainer>
+
+      {/* ── Overlay filtres cross-critères — coin supérieur droit ── */}
+      {totalCount > 0 && (
+        <MapFilterOverlay
+          dataRanges={dataRanges}
+          filterHauteur={filterHauteur}
+          filterTemp={filterTemp}
+          filterCwsi={filterCwsi}
+          onHauteurChange={onHauteurChange}
+          onTempChange={onTempChange}
+          onCwsiChange={onCwsiChange}
+          onReset={onFilterReset}
+          filteredCount={geojson?.features?.length ?? 0}
+          totalCount={totalCount}
+        />
+      )}
+
+      {/* ── Overlay "Calcul spatial en cours…" — affiché pendant les traitements worker ── */}
+      {pendingCalcs.size > 0 && (
+        <div className="geo-calc-overlay">
+          <div className="geo-calc-spinner" />
+          <span>
+            Calcul spatial en cours…
+            {' '}({[...pendingCalcs].map(t => ({ IDW: 'IDW', KMEANS: 'Secteurs', TSP: 'Tournée' }[t] ?? t)).join(', ')})
+          </span>
+        </div>
+      )}
 
       {/* ── Overlay split-screen — positions initiales à 50 %, mises à jour par DOM direct ── */}
       {isCompareMode && (

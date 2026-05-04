@@ -239,7 +239,10 @@ a { color: inherit; }
   border-right: 1px solid var(--border-light);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* overflow-y: auto permet au panneau de scroller si le contenu dépasse la hauteur.
+     min-height: 0 est requis pour que les flex children puissent scroller. */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .col-right {
@@ -356,25 +359,84 @@ a { color: inherit; }
   gap: var(--s3);
   margin-bottom: 2px;
 }
-.mission-info h2 { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 2px; letter-spacing: -0.02em; }
-.mission-date    { color: var(--primary); font-size: var(--fs-sm); font-weight: 500; }
-.notes           { font-size: var(--fs-sm); color: var(--text-muted); font-style: italic; margin-top: var(--s1); }
-.meteo           { display: flex; gap: var(--s3); margin-top: var(--s2); font-size: var(--fs-sm); color: var(--text-muted); flex-wrap: wrap; }
 
-.btn-export-csv {
+/* Bloc texte gauche : titre + badge statut + date */
+.mission-info-meta { min-width: 0; flex: 1; }
+
+.mission-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+.mission-title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pill "Terminée" */
+.mission-status-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px var(--s3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--primary);
-  background: var(--primary-bg);
-  border: 1px solid rgba(37,99,235,0.2);
-  border-radius: var(--radius-md);
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: rgba(16,185,129,0.12);
+  color: #10b981;
+  border: 1px solid rgba(16,185,129,0.25);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   white-space: nowrap;
-  text-decoration: none;
   flex-shrink: 0;
+}
+
+.mission-date { color: var(--primary); font-size: var(--fs-sm); font-weight: 500; }
+.notes        { font-size: var(--fs-sm); color: var(--text-muted); font-style: italic; margin-top: var(--s1); }
+.meteo        { display: flex; gap: var(--s3); margin-top: var(--s2); font-size: var(--fs-sm); color: var(--text-muted); flex-wrap: wrap; }
+
+/* Bloc boutons export — flex-wrap garantit qu'ils ne sortent jamais du panneau */
+.mission-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.btn-export-xlsx {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px var(--s3); border-radius: var(--radius-md);
+  border: 1px solid rgba(37,99,235,0.2); background: var(--primary-bg);
+  color: var(--primary); font-size: var(--fs-xs); font-weight: 600;
+  white-space: nowrap; text-decoration: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-export-xlsx:hover { background: #dbeafe; border-color: rgba(37,99,235,0.4); }
+
+.btn-export-pdf {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px var(--s3); border-radius: var(--radius-md);
+  border: 1px solid rgba(239,68,68,0.25); background: rgba(239,68,68,0.08);
+  color: #ef4444; font-size: var(--fs-xs); font-weight: 600;
+  white-space: nowrap; text-decoration: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-export-pdf:hover { background: rgba(239,68,68,0.16); border-color: rgba(239,68,68,0.4); }
+
+/* Rétrocompatibilité — ancienne classe présente dans d'autres composants */
+.btn-export-csv {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px var(--s3); border-radius: var(--radius-md);
+  border: 1px solid rgba(37,99,235,0.2); background: var(--primary-bg);
+  color: var(--primary); font-size: var(--fs-xs); font-weight: 600;
+  white-space: nowrap; text-decoration: none;
   transition: background 0.2s, border-color 0.2s;
 }
 .btn-export-csv:hover { background: #dbeafe; border-color: rgba(37,99,235,0.4); }
@@ -1621,7 +1683,429 @@ a { color: inherit; }
   color: var(--primary) !important; text-decoration: underline;
 }
 
-/* ── 28. RESPONSIVE ─────────────────────────────────── */
+/* ── 28. BOUTON DÉCLENCHEUR FILTRES ──────────────────── */
+.btn-filter-trigger {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-light);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: var(--fs-xs); font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-filter-trigger:hover {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+  color: var(--primary);
+}
+.btn-filter-trigger.active {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+  color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-dim);
+}
+
+/* ── 29. POPOVER FILTRES AVANCÉS ─────────────────────── */
+.filter-popover {
+  position: fixed;
+  z-index: 2000;
+  width: 280px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.filter-popover-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+.filter-popover-title {
+  display: flex; align-items: center; gap: var(--s2);
+  font-size: var(--fs-xs); font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0.2px;
+}
+.filter-popover-close {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  color: var(--text-subtle);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.filter-popover-close:hover { background: var(--bg-raised); color: var(--text-main); }
+
+/* Contenu headless AdvancedFilters */
+.af-content {
+  padding: 10px 12px 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* Ligne critère (label + paire de champs) */
+.af-range-row {
+  display: flex; flex-direction: column; gap: 5px;
+}
+.af-range-label {
+  font-size: var(--fs-xs); font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Paire Min / Max */
+.af-num-pair {
+  display: flex; align-items: center; gap: 6px;
+}
+.af-num-sep {
+  font-size: var(--fs-xs); color: var(--text-subtle);
+  flex-shrink: 0;
+}
+.af-num-field {
+  display: flex; align-items: center; gap: 4px;
+  flex: 1;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 3px 6px;
+  transition: border-color 0.15s;
+}
+.af-num-field:focus-within { border-color: var(--primary); }
+.af-num-tag {
+  font-size: 9px; font-weight: 700;
+  color: var(--text-subtle);
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.af-num-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.af-num-input::-webkit-inner-spin-button,
+.af-num-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.af-num-unit {
+  font-size: 9px; color: var(--text-subtle);
+  flex-shrink: 0;
+}
+
+/* Bouton reset */
+.af-reset {
+  display: flex; align-items: center; gap: var(--s1);
+  padding: 5px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(220,38,38,0.25);
+  background: rgba(220,38,38,0.06);
+  color: var(--danger); font-size: var(--fs-xs); font-weight: 600;
+  cursor: pointer; align-self: flex-start;
+  transition: background 0.15s, border-color 0.15s;
+}
+.af-reset:hover { background: rgba(220,38,38,0.12); border-color: rgba(220,38,38,0.4); }
+
+/* ── 29b. SÉLECTEUR TYPE DE SOL (StatsPanel) ─────────── */
+.wb-soil-chips {
+  display: flex; gap: var(--s1); flex-wrap: wrap;
+}
+.wb-soil-chip {
+  padding: 3px 10px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-light);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: var(--fs-xs); font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.wb-soil-chip:hover {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+  color: var(--primary);
+}
+.wb-soil-chip.active {
+  box-shadow: 0 0 0 2px var(--primary-dim);
+  font-weight: 700;
+}
+
+/* Bloc conseil sol */
+.wb-soil-advisory {
+  border-left: 3px solid;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--bg-raised);
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.wb-soil-advisory-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--fs-xs); font-weight: 700;
+}
+.wb-soil-advisory-pill {
+  padding: 1px 7px;
+  border-radius: var(--radius-xl);
+  background: currentColor;
+  color: #fff;
+  font-size: 9px; font-weight: 800;
+  letter-spacing: 0.2px;
+}
+.wb-soil-advisory-freq {
+  font-size: var(--fs-xs); color: var(--text-muted); font-weight: 500;
+}
+.wb-soil-advisory-text {
+  font-size: var(--fs-xs); color: var(--text-muted);
+  line-height: 1.5; margin: 0;
+}
+
+/* ── 30. OVERLAY GÉOTRAITEMENT WORKER ───────────────── */
+.geo-calc-overlay {
+  position: absolute;
+  bottom: var(--s4); left: 50%;
+  transform: translateX(-50%);
+  z-index: 1500;
+  display: flex; align-items: center; gap: var(--s2);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  padding: 6px 14px;
+  font-size: var(--fs-xs); font-weight: 600;
+  color: var(--text-muted);
+  box-shadow: var(--shadow-card);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.geo-calc-spinner {
+  width: 12px; height: 12px;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 31. MAP FILTER OVERLAY ─────────────────────────── */
+
+/* Conteneur absolu dans le wrapper TreeMap (position:relative).
+   right:54px laisse de la place au LayersControl Leaflet (~34px + 10px marge). */
+.mfo-container {
+  position: absolute;
+  top: 10px;
+  right: 54px;
+  z-index: 1001;
+}
+
+/* ── Bouton déclencheur ───────────────────────────────
+   Pill compact avec chevron animé (rotate 180° quand ouvert). */
+.mfo-trigger {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-xl);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: var(--fs-xs); font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  box-shadow: var(--shadow-soft);
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  letter-spacing: 0.1px;
+}
+.mfo-trigger-label { line-height: 1; }
+.mfo-chevron {
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: transform 0.2s ease, opacity 0.15s;
+}
+.mfo-trigger.open  .mfo-chevron { transform: rotate(180deg); opacity: 0.9; }
+.mfo-trigger:hover                { border-color: var(--primary); color: var(--primary); }
+.mfo-trigger:hover .mfo-chevron  { opacity: 1; }
+.mfo-trigger.active {
+  border-color: var(--primary); color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-dim), var(--shadow-soft);
+}
+
+/* ── Popover card ─────────────────────────────────────
+   Largeur fixe 284px, ancrée right:0 du conteneur → jamais hors-écran. */
+.mfo-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 284px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-hover);
+  overflow: hidden;
+}
+
+/* ── En-tête ── */
+.mfo-popover-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+.mfo-popover-title {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 700;
+  color: var(--text-main);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.mfo-popover-close {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: var(--radius-sm);
+  border: none; background: transparent;
+  color: var(--text-subtle); cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mfo-popover-close:hover { background: var(--border-light); color: var(--text-main); }
+
+/* ── Corps — trois critères, séparés par des règles CSS ── */
+.mfo-popover-body { padding: 4px 0; }
+
+/* Bloc d'un critère */
+.mfo-criterion { padding: 7px 10px; }
+.mfo-criterion + .mfo-criterion { border-top: 1px solid var(--border-light); }
+
+/* Ligne label / indicateur actif */
+.mfo-criterion-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 5px;
+}
+.mfo-criterion-label {
+  font-size: 10px; font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.mfo-criterion-meta {
+  display: flex; align-items: center; gap: 5px;
+}
+.mfo-criterion-unit {
+  font-size: 9px; color: var(--text-subtle); font-weight: 500;
+}
+/* Point bleu = filtre actif sur ce critère */
+.mfo-criterion-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--primary); flex-shrink: 0;
+}
+
+/* Grille MIN – MAX : deux colonnes égales + séparateur central fixe */
+.mfo-criterion-inputs {
+  display: grid;
+  grid-template-columns: 1fr 16px 1fr;
+  align-items: center;
+  gap: 4px;
+}
+.mfo-input-sep {
+  text-align: center;
+  font-size: 12px; color: var(--text-subtle);
+  user-select: none;
+}
+
+/* Input numérique compact — fond Slate 50, bordure fine, centré */
+.mfo-input {
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-raised);       /* #f8fafc — Slate 50 */
+  color: var(--text-main);
+  font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  -moz-appearance: textfield;
+}
+.mfo-input::-webkit-inner-spin-button,
+.mfo-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.mfo-input::placeholder {
+  color: var(--text-subtle);
+  font-weight: 400; font-size: 10px;
+  letter-spacing: 0.2px;
+}
+.mfo-input:focus {
+  border-color: var(--primary);
+  background: var(--primary-bg);      /* Blue 50 au focus */
+  box-shadow: 0 0 0 2px var(--primary-dim);
+}
+.mfo-input:hover:not(:focus) { border-color: var(--border-medium); }
+
+/* ── Pied : badge résultat  +  bouton reset (discret → rouge au hover) ── */
+.mfo-popover-footer {
+  display: flex; align-items: center;
+  padding: 6px 10px 7px;
+  border-top: 1px solid var(--border-light);
+  gap: 8px;
+}
+.mfo-count-pill {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-xl);
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-dim);
+  color: var(--primary);
+  font-size: 10px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; flex-shrink: 0;
+}
+.mfo-count-pill.no-results {
+  background: rgba(220,38,38,0.07);
+  border-color: rgba(220,38,38,0.2);
+  color: var(--danger);
+}
+.mfo-reset-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: none;
+  color: var(--text-subtle);
+  font-size: 10px; font-weight: 600;
+  cursor: pointer;
+  padding: 0; margin-left: auto;
+  transition: color 0.15s;
+  letter-spacing: 0.1px;
+}
+.mfo-reset-btn:hover { color: var(--danger); }
+
+/* ── Bandeau "aucun résultat" — pill rouge, centré en bas de carte ── */
+.mfo-no-results {
+  position: absolute;
+  bottom: 40px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 1001;
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 16px;
+  border-radius: var(--radius-xl);
+  background: #fff1f2;               /* Rose 50 — visible sur fond clair */
+  border: 1px solid #fecdd3;          /* Rose 200 */
+  color: #be123c;                     /* Rose 700 */
+  font-size: var(--fs-xs); font-weight: 600;
+  box-shadow: var(--shadow-card);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.mfo-no-results-icon { font-size: 13px; flex-shrink: 0; }
+
+/* ── 32. RESPONSIVE ─────────────────────────────────────────────────────── */
 @media (max-width: 1200px) { :root { --panel-w: 280px; } }
 
 @media (max-width: 900px) {
