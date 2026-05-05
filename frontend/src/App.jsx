@@ -481,7 +481,7 @@ function Dashboard() {
           </span>
         </div>
         <div className="panel-float-body">
-          <TrendPanel missions={missions} currentId={currentId} />
+          <TrendPanel missions={missions} currentId={currentId} geojson={filteredGeojson} />
 
           <Legend
             activeStress={activeStress}

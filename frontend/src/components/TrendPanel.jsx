@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import * as turf from '@turf/turf'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceDot, CartesianGrid,
 } from 'recharts'
+import { LuHistory } from 'react-icons/lu'
 import { fetchStats } from '../api'
 import { TrendSkeleton } from './Skeleton'
 
@@ -29,10 +31,14 @@ function TrendTooltip({ active, payload, label }) {
   )
 }
 
-export default function TrendPanel({ missions, currentId }) {
-  const [data,    setData]    = useState([])
-  const [loading, setLoading] = useState(false)
+export default function TrendPanel({ missions, currentId, geojson }) {
+  const [data,               setData]               = useState([])
+  const [loading,            setLoading]            = useState(false)
+  const [historicalInsights, setHistoricalInsights] = useState(null)
+  const [isLoadingInsights,  setIsLoadingInsights]  = useState(false)
+  const [showWeatherHistory, setShowWeatherHistory] = useState(false)
 
+  /* ── Fetch CWSI moyen par mission ── */
   useEffect(() => {
     const avecDonnees = missions.filter(m => m.has_shapefile)
     if (!avecDonnees.length) { setData([]); return }
@@ -56,6 +62,55 @@ export default function TrendPanel({ missions, currentId }) {
       setLoading(false)
     })
   }, [missions])
+
+  /* ── Fetch archives climatiques Open-Meteo entre la 1ʳᵉ et la dernière mission ── */
+  useEffect(() => {
+    const avecDonnees = missions.filter(m => m.has_shapefile && m.date)
+    if (avecDonnees.length < 2 || !geojson?.features?.length) {
+      setHistoricalInsights(null)
+      return
+    }
+
+    const sorted    = [...avecDonnees].sort((a, b) => a.date.localeCompare(b.date))
+    const startDate = sorted[0].date
+    const endDate   = sorted[sorted.length - 1].date
+
+    let lat, lon
+    try {
+      const centroid = turf.centroid(geojson)
+      lon = +centroid.geometry.coordinates[0].toFixed(5)
+      lat = +centroid.geometry.coordinates[1].toFixed(5)
+    } catch {
+      return
+    }
+
+    setIsLoadingInsights(true)
+    setHistoricalInsights(null)
+
+    fetch(
+      `https://archive-api.open-meteo.com/v1/archive` +
+      `?latitude=${lat}&longitude=${lon}` +
+      `&start_date=${startDate}&end_date=${endDate}` +
+      `&daily=temperature_2m_max,precipitation_sum` +
+      `&timezone=Africa%2FCasablanca`
+    )
+      .then(r => r.json())
+      .then(json => {
+        const daily = json?.daily
+        if (!daily) return
+
+        const hotDays = (daily.temperature_2m_max ?? [])
+          .filter(t => t != null && t > 30).length
+
+        const totalRain = (daily.precipitation_sum ?? [])
+          .filter(p => p != null)
+          .reduce((acc, p) => acc + p, 0)
+
+        setHistoricalInsights({ hotDays, totalRain: +totalRain.toFixed(1) })
+      })
+      .catch(() => setHistoricalInsights(null))
+      .finally(() => setIsLoadingInsights(false))
+  }, [missions, geojson])
 
   const missionActive = data.find(d => d.id === currentId)
 
@@ -141,11 +196,52 @@ export default function TrendPanel({ missions, currentId }) {
             </div>
           )}
 
+          {/* ── Légende + bouton archives climatiques ── */}
           <div className="trend-legend">
             <span className="swatch" style={{ background: '#38bdf8' }} />
             <span>CWSI moyen</span>
             <span className="swatch" style={{ background: '#22c55e', marginLeft: 12 }} />
             <span>Mission active</span>
+
+            {/* Bouton + popover climatique — visible uniquement si ≥ 2 missions */}
+            {data.length >= 2 && (
+              <span style={{ marginLeft: 'auto', position: 'relative' }}>
+                <button
+                  className={`btn-mini-history${showWeatherHistory ? ' active' : ''}`}
+                  onClick={() => setShowWeatherHistory(v => !v)}
+                  title="Analyse climatique inter-missions"
+                  aria-expanded={showWeatherHistory}
+                >
+                  <LuHistory size={14} />
+                </button>
+
+                {showWeatherHistory && (
+                  <div className="history-popup" role="tooltip">
+                    {isLoadingInsights && (
+                      <span className="history-popup-loader">
+                        Analyse des archives climatiques…
+                      </span>
+                    )}
+                    {!isLoadingInsights && historicalInsights && (
+                      <p style={{ margin: 0 }}>
+                        <b>💡 Analyse climatique de la période :</b>{' '}
+                        L'évolution du stress hydrique est corrélée aux conditions réelles.
+                        La parcelle a enregistré{' '}
+                        <b>{historicalInsights.hotDays} jours au-dessus de 30°C</b>{' '}
+                        et un cumul de précipitations de{' '}
+                        <b>{historicalInsights.totalRain} mm</b>{' '}
+                        entre ces deux missions.
+                      </p>
+                    )}
+                    {!isLoadingInsights && !historicalInsights && (
+                      <span style={{ fontStyle: 'italic' }}>
+                        Données climatiques indisponibles.
+                      </span>
+                    )}
+                  </div>
+                )}
+              </span>
+            )}
           </div>
 
           {data.length === 1 && (
