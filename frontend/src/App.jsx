@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import logoSvg from './assets/images/logo.svg'
 import { ToastProvider } from './hooks/useToast'
 import { useMissions }    from './hooks/useMissions'
 import { useMissionData } from './hooks/useMissionData'
@@ -13,7 +14,7 @@ import { STRESS_COLORS } from './constants'
 import MCDAPanel from './components/MCDAPanel'
 import {
   LuDroplets, LuTriangleAlert, LuMap, LuRoute,
-  LuSlidersHorizontal, LuSatellite, LuTrendingUp, LuSettings,
+  LuSlidersHorizontal, LuSatellite, LuTrendingUp, LuSettings, LuHexagon,
 } from 'react-icons/lu'
 
 
@@ -87,6 +88,10 @@ function Dashboard() {
   const [showSectors, setShowSectors]     = useState(false)
   const [weightStress, setWeightStress]   = useState(60)
   const [weightHeight, setWeightHeight]   = useState(40)
+  const [hotspotRadius, setHotspotRadius] = useState(15)
+  const [idwResolution, setIdwResolution] = useState(10)
+  const [sectorCount,   setSectorCount]   = useState(3)
+  const [showHexbins,   setShowHexbins]   = useState(false)
 
   // ── Filtres cross-critères (état global → source unique pour carte + stats) ─
   // null = inactif (toutes les valeurs passent) ; [min, max] = filtre actif.
@@ -222,7 +227,7 @@ function Dashboard() {
       {/* ── HEADER ── */}
       <header className="header-bar">
         <div className="brand">
-          <span className="brand-icon">◈</span>
+          <img src={logoSvg} alt="Logo GeoOlive" className="brand-logo" />
           <h1>GeoOlive</h1>
         </div>
         <div className="header-status">
@@ -285,6 +290,20 @@ function Dashboard() {
 
         <div className="panel-float-body">
 
+          {dataLoading
+            ? <StatsSkeleton />
+            : <StatsPanel
+                stats={displayStats}
+                mission={currentMission}
+                statsCompare={isCompareMode && !selectedTrees ? statsCompare : null}
+                missionCompare={isCompareMode && !selectedTrees ? compareMission : null}
+                isZonalActive={selectedTrees !== null}
+                onClearZonal={() => setSelectedTrees(null)}
+                features={selectedTrees}
+                allFeatures={filteredGeojson?.features ?? []}
+              />
+          }
+
           {hasMapData && (
             <button
               className={`btn-mcda${showMCDA ? ' active' : ''}`}
@@ -303,20 +322,6 @@ function Dashboard() {
             />
           )}
 
-          {dataLoading
-            ? <StatsSkeleton />
-            : <StatsPanel
-                stats={displayStats}
-                mission={currentMission}
-                statsCompare={isCompareMode && !selectedTrees ? statsCompare : null}
-                missionCompare={isCompareMode && !selectedTrees ? compareMission : null}
-                isZonalActive={selectedTrees !== null}
-                onClearZonal={() => setSelectedTrees(null)}
-                features={selectedTrees}
-                allFeatures={filteredGeojson?.features ?? []}
-              />
-          }
-
           {hasMapData && (
             <button
               className={`btn-hotspots${showHotspots ? ' active' : ''}`}
@@ -327,6 +332,20 @@ function Dashboard() {
             </button>
           )}
 
+          {showHotspots && hasMapData && (
+            <div className="tool-settings">
+              <div className="tool-settings-row">
+                <label>Rayon de fusion</label>
+                <span className="tool-settings-value">{hotspotRadius} m</span>
+              </div>
+              <input
+                type="range" className="mcda-range"
+                min={5} max={30} step={1} value={hotspotRadius}
+                onChange={e => setHotspotRadius(Number(e.target.value))}
+              />
+            </div>
+          )}
+
           {hasMapData && (
             <button
               className={`btn-idw${showIDW ? ' active' : ''}`}
@@ -335,6 +354,31 @@ function Dashboard() {
               <LuMap size={16} />
               {showIDW ? 'Masquer la surface IDW' : 'Activer la surface continue (IDW)'}
             </button>
+          )}
+
+          {hasMapData && (
+            <button
+              className={`btn-hexbin${showHexbins ? ' active' : ''}`}
+              onClick={() => setShowHexbins(v => !v)}
+            >
+              <LuHexagon size={16} />
+              {showHexbins ? 'Masquer le maillage hexagonal' : 'Densité par maillage hexagonal'}
+            </button>
+          )}
+
+          {showIDW && hasMapData && (
+            <div className="tool-settings">
+              <div className="tool-settings-row">
+                <label>Taille des cellules</label>
+                <span className="tool-settings-value">{idwResolution} m</span>
+              </div>
+              <input
+                type="range" className="mcda-range"
+                min={5} max={30} step={1} value={idwResolution}
+                onChange={e => setIdwResolution(Number(e.target.value))}
+              />
+              <p className="tool-settings-hint">⚠ Valeur faible = calcul plus lourd.</p>
+            </div>
           )}
 
           {hasMapData && (
@@ -355,6 +399,20 @@ function Dashboard() {
               <LuDroplets size={16} />
               {showSectors ? "Masquer les secteurs d'irrigation" : "Générer les secteurs d'irrigation"}
             </button>
+          )}
+
+          {showSectors && hasMapData && (
+            <div className="tool-settings">
+              <div className="tool-settings-row">
+                <label>Nombre de secteurs / vannes</label>
+                <span className="tool-settings-value">{sectorCount}</span>
+              </div>
+              <input
+                type="range" className="mcda-range"
+                min={2} max={6} step={1} value={sectorCount}
+                onChange={e => setSectorCount(Number(e.target.value))}
+              />
+            </div>
           )}
         </div>
       </aside>
@@ -379,6 +437,10 @@ function Dashboard() {
           showMCDA={showMCDA}
           mcdaScores={mcdaScores}
           showSectors={showSectors}
+          showHexbins={showHexbins}
+          hotspotRadius={hotspotRadius}
+          idwResolution={idwResolution}
+          sectorCount={sectorCount}
           dataRanges={dataRanges}
           filterHauteur={filterHauteur}
           filterTemp={filterTemp}

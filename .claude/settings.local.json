@@ -12,7 +12,12 @@
       "Bash(\"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\venv\\\\Scripts\\\\pip.exe\" install *)",
       "Bash(\"venv\\\\Scripts\\\\python.exe\" -c \"from fpdf import FPDF; from config import STRESS_COLORS; print\\('imports OK'\\); print\\('STRESS_COLORS:', STRESS_COLORS\\)\")",
       "Bash('venv\\\\Scripts\\\\python.exe' -c ' *)",
-      "Bash(node -e \"const icons = require\\('./node_modules/react-icons/lu/index.cjs'\\); const matches = Object.keys\\(icons\\).filter\\(k => k.toLowerCase\\(\\).includes\\('scatter'\\) || k.toLowerCase\\(\\).includes\\('chart'\\) || k.toLowerCase\\(\\).includes\\('dot'\\) || k.toLowerCase\\(\\).includes\\('plot'\\)\\); console.log\\(matches.slice\\(0,20\\)\\)\")"
+      "Bash(node -e \"const icons = require\\('./node_modules/react-icons/lu/index.cjs'\\); const matches = Object.keys\\(icons\\).filter\\(k => k.toLowerCase\\(\\).includes\\('scatter'\\) || k.toLowerCase\\(\\).includes\\('chart'\\) || k.toLowerCase\\(\\).includes\\('dot'\\) || k.toLowerCase\\(\\).includes\\('plot'\\)\\); console.log\\(matches.slice\\(0,20\\)\\)\")",
+      "PowerShell(Select-String -Path \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\node_modules\\\\react-icons\\\\lu\\\\index.mjs\" -Pattern \"LuChart|LuActivity|LuTrend|LuGraph|LuLine\" | Select-Object -First 5 | ForEach-Object { $_.Matches.Value } | Sort-Object -Unique)",
+      "PowerShell($content = Get-Content \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\node_modules\\\\react-icons\\\\lu\\\\index.mjs\" -Raw; [regex]::Matches\\($content, 'export \\\\{ \\(Lu[A-Za-z0-9]+\\)'\\) | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match 'Chart|Activity|Trend|Graph|Stats|Analyt|Line|Area' } | Sort-Object)",
+      "PowerShell($content = Get-Content \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\node_modules\\\\react-icons\\\\lu\\\\index.mjs\" -Raw -Encoding UTF8; $matches2 = [regex]::Matches\\($content, 'var \\(Lu[A-Za-z0-9]+\\)'\\); $icons = $matches2 | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique; $icons | Where-Object { $_ -match 'Chart|Activity|Trend|Graph|Stats|Line|Area|Pie' })",
+      "PowerShell(Get-Content *)",
+      "Bash(node *)"
     ]
   }
 }

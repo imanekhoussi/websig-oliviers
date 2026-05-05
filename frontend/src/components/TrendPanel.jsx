@@ -78,8 +78,8 @@ export default function TrendPanel({ missions, currentId }) {
 
       {!loading && data.length > 0 && (
         <>
-          <ResponsiveContainer width="100%" height={205}>
-            <LineChart data={data} margin={{ top: 16, right: 16, left: -16, bottom: 65 }}>
+          <ResponsiveContainer width="100%" height={130}>
+            <LineChart data={data} margin={{ top: 10, right: 10, left: 15, bottom: 25 }}>
               <CartesianGrid
                 strokeDasharray="4 4"
                 stroke="rgba(148,163,184,0.08)"
@@ -99,6 +99,7 @@ export default function TrendPanel({ missions, currentId }) {
                 tick={{ fill: '#94a3b8' }}
                 tickLine={false} axisLine={false}
                 tickFormatter={v => v.toFixed(1)}
+                width={45}
                 label={{
                   value: 'CWSI',
                   angle: -90,

@@ -13,28 +13,35 @@ import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import { fetchTreeHistory } from '../api'
 import { LuThermometer, LuRuler, LuDroplet, LuFootprints } from 'react-icons/lu'
 import MapFilterOverlay from './MapFilterOverlay'
+import WeatherWidget from './WeatherWidget'
+import { useToast } from '../hooks/useToast'
 
 const DEFAULT_CENTER = [35.76, -5.83]
 const DEFAULT_ZOOM   = 7
 
 /**
  * Outil de dessin natif Leaflet.Draw.
- * Monte un L.Control.Draw sur la carte et appelle setSelectedTrees
- * après chaque création ou suppression de forme.
+ * Outils actifs : Polygon, Rectangle, Polyline (mesure), Marker.
+ * Circle et CircleMarker désactivés (non nécessaires).
+ *
+ * Pour Polygon / Rectangle :
+ *   - sélection spatiale des arbres via turf.booleanPointInPolygon
+ *   - calcul de surface en hectares via turf.area
+ *   - notification Toast "Zone sélectionnée : X.XX ha · Y arbres"
+ *
+ * Pour Polyline / Marker : désélectionne uniquement (pas de zone).
  */
 function DrawControl({ allFeatures, setSelectedTrees }) {
-  const map             = useMap()
-  // Ref pour que handleCreated lise toujours la valeur courante de allFeatures,
-  // même si le handler a été créé avant le chargement du geojson.
-  const allFeaturesRef  = useRef(allFeatures)
+  const map          = useMap()
+  const toast        = useToast()
+  const allFeaturesRef = useRef(allFeatures)
 
-  // Synchronise la ref à chaque rendu — pas de remontage du contrôle nécessaire.
   useEffect(() => { allFeaturesRef.current = allFeatures }, [allFeatures])
 
   useEffect(() => {
     if (!map || !setSelectedTrees) return
 
-    // Traduction française des tooltips Leaflet Draw
+    // Traductions françaises
     if (window.L?.drawLocal) {
       const d = window.L.drawLocal.draw
       d.toolbar.actions.title = 'Annuler le dessin'
@@ -47,21 +54,24 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       d.handlers.polygon.tooltip.cont   = 'Cliquez pour continuer le dessin.'
       d.handlers.polygon.tooltip.end    = 'Cliquez sur le premier point pour fermer la zone.'
       d.handlers.polyline.tooltip.start = 'Cliquez pour commencer la ligne de mesure.'
-      d.handlers.circle.tooltip.start   = 'Cliquez et glissez pour dessiner une zone circulaire.'
       d.handlers.marker.tooltip.start   = 'Cliquez sur la carte pour placer un marqueur.'
     }
 
     const fg = new window.L.FeatureGroup()
     map.addLayer(fg)
 
+    // Couleur primaire du thème pour toutes les formes dessinées
+    const DRAW_COLOR   = '#2563eb'
+    const shapeOptions = { color: DRAW_COLOR, weight: 2, fillOpacity: 0.12 }
+
     const drawControl = new window.L.Control.Draw({
       edit: { featureGroup: fg },
       draw: {
-        polygon:      { shapeOptions: { color: '#38bdf8', weight: 2 } },
-        rectangle:    { shapeOptions: { color: '#38bdf8', weight: 2 } },
-        circle:       { shapeOptions: { color: '#38bdf8', weight: 2 } },
-        polyline:     { shapeOptions: { color: '#38bdf8', weight: 2 } },
+        polygon:      { shapeOptions },
+        rectangle:    { shapeOptions },
+        polyline:     { shapeOptions: { color: DRAW_COLOR, weight: 2 } },
         marker:       true,
+        circle:       false,
         circlemarker: false,
       },
     })
@@ -71,29 +81,27 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       fg.clearLayers()
       fg.addLayer(e.layer)
 
-      const features = allFeaturesRef.current   // toujours à jour
-
-      // Polyline et marker ne définissent pas de zone de sélection
+      // Polyline et marker : pas de sélection spatiale
       if (e.layerType === 'polyline' || e.layerType === 'marker') {
         setSelectedTrees(null)
         return
       }
 
-      // Circle : convertit le cercle Leaflet en polygone GeoJSON via Turf
-      let selectionPolygon
-      if (e.layerType === 'circle') {
-        const { lat, lng } = e.layer.getLatLng()
-        const radiusKm = e.layer.getRadius() / 1000
-        selectionPolygon = turf.circle([lng, lat], radiusKm, { units: 'kilometers' })
-      } else {
-        selectionPolygon = e.layer.toGeoJSON()
-      }
+      const selectionPolygon = e.layer.toGeoJSON()
+      const features         = allFeaturesRef.current
 
-      if (!features?.length) { setSelectedTrees([]); return }
+      // Calcul de la surface en hectares
+      const areaM2 = turf.area(selectionPolygon)
+      const areaHa = (areaM2 / 10000).toFixed(2)
+
+      if (!features?.length) {
+        setSelectedTrees([])
+        toast(`Zone : ${areaHa} ha · 0 arbre dans les données`, 'info')
+        return
+      }
 
       const selected = features.filter(feature => {
         try {
-          // turf.centroid fonctionne sur Point ET Polygon (couronne d'arbre)
           const center = turf.centroid(feature)
           return turf.booleanPointInPolygon(center, selectionPolygon)
         } catch {
@@ -101,12 +109,15 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
         }
       })
 
+      const n = selected.length
+      toast(
+        `Zone sélectionnée : ${areaHa} ha · ${n} arbre${n !== 1 ? 's' : ''}`,
+        n > 0 ? 'success' : 'info',
+      )
       setSelectedTrees(selected)
     }
 
-    function handleDeleted() {
-      setSelectedTrees(null)
-    }
+    function handleDeleted() { setSelectedTrees(null) }
 
     map.on(window.L.Draw.Event.CREATED, handleCreated)
     map.on(window.L.Draw.Event.DELETED, handleDeleted)
@@ -117,7 +128,7 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       map.removeControl(drawControl)
       map.removeLayer(fg)
     }
-  }, [map, setSelectedTrees])
+  }, [map, setSelectedTrees]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
 }
@@ -291,7 +302,7 @@ function cwsiToStressColor(cwsi) {
   return STRESS_COLORS.severe
 }
 
-const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b']
+const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6']
 
 /** Style Leaflet pour les secteurs K-Means */
 function sectorStyleFn(feature) {
@@ -394,6 +405,16 @@ function idwStyleFn(feature) {
   }
 }
 
+/** Style Leaflet pour les hexagones — contour blanc fin, remplissage par CWSI moyen */
+function hexbinStyleFn(feature) {
+  return {
+    color:       'rgba(255,255,255,0.35)',
+    weight:      0.8,
+    fillColor:   cwsiToStressColor(feature?.properties?.cwsi),
+    fillOpacity: 0.60,
+  }
+}
+
 export default function TreeMap({
   geojson,
   activeStress = ['faible', 'modere', 'eleve', 'severe'],
@@ -412,6 +433,10 @@ export default function TreeMap({
   showMCDA = false,
   mcdaScores = {},
   showSectors = false,
+  showHexbins = false,
+  hotspotRadius = 15,
+  idwResolution = 10,
+  sectorCount   = 3,
   // ── filtres cross-critères ──────────────────────────
   dataRanges    = { hauteur: [0, 20], temp: [0, 60], cwsi: [0, 1] },
   filterHauteur = null,
@@ -439,12 +464,13 @@ export default function TreeMap({
   // Le worker tourne dans un thread V8 séparé : aucun blocage du Main Thread.
   const workerRef    = useRef(null)
   // Compteurs de requêtes par type — permet de rejeter les résultats obsolètes.
-  const latestReqId  = useRef({ IDW: 0, KMEANS: 0, TSP: 0 })
+  const latestReqId  = useRef({ IDW: 0, KMEANS: 0, TSP: 0, HEXBIN: 0 })
 
   // Résultats géospatiaux issus du worker (remplacent les anciens useMemo)
-  const [idwGrid,       setIdwGrid]       = useState(null)
-  const [routeResult,   setRouteResult]   = useState(null)
+  const [idwGrid,        setIdwGrid]        = useState(null)
+  const [routeResult,    setRouteResult]    = useState(null)
   const [sectorPolygons, setSectorPolygons] = useState(null)
+  const [hexbinGrid,     setHexbinGrid]     = useState(null)
   // Ensemble des calculs en cours — alimente l'overlay "Calcul spatial en cours…"
   const [pendingCalcs, setPendingCalcs]   = useState(new Set())
 
@@ -466,6 +492,9 @@ export default function TreeMap({
       } else if (type === 'TSP_RESULT' && reqId === latestReqId.current.TSP) {
         setRouteResult(result)
         setPendingCalcs(s => { const n = new Set(s); n.delete('TSP'); return n })
+      } else if (type === 'HEXBIN_RESULT' && reqId === latestReqId.current.HEXBIN) {
+        setHexbinGrid(result)
+        setPendingCalcs(s => { const n = new Set(s); n.delete('HEXBIN'); return n })
       }
       // Les résultats avec un reqId inférieur au dernier connu sont silencieusement ignorés.
     }
@@ -485,8 +514,8 @@ export default function TreeMap({
     }
     const reqId = ++latestReqId.current.IDW
     setPendingCalcs(s => new Set(s).add('IDW'))
-    workerRef.current?.postMessage({ type: 'IDW', payload: { geojson }, reqId })
-  }, [showIDW, geojson])
+    workerRef.current?.postMessage({ type: 'IDW', payload: { geojson, idwResolution }, reqId })
+  }, [showIDW, geojson, idwResolution])
 
   // Déclenche le calcul K-Means dans le worker.
   useEffect(() => {
@@ -498,8 +527,21 @@ export default function TreeMap({
     }
     const reqId = ++latestReqId.current.KMEANS
     setPendingCalcs(s => new Set(s).add('KMEANS'))
-    workerRef.current?.postMessage({ type: 'KMEANS', payload: { geojson, activeStress }, reqId })
-  }, [showSectors, geojson, activeStress])
+    workerRef.current?.postMessage({ type: 'KMEANS', payload: { geojson, activeStress, sectorCount }, reqId })
+  }, [showSectors, geojson, activeStress, sectorCount])
+
+  // Déclenche le calcul hexbin dans le worker.
+  useEffect(() => {
+    if (!showHexbins || !geojson?.features?.length) {
+      latestReqId.current.HEXBIN++
+      setHexbinGrid(null)
+      setPendingCalcs(s => { const n = new Set(s); n.delete('HEXBIN'); return n })
+      return
+    }
+    const reqId = ++latestReqId.current.HEXBIN
+    setPendingCalcs(s => new Set(s).add('HEXBIN'))
+    workerRef.current?.postMessage({ type: 'HEXBIN', payload: { geojson }, reqId })
+  }, [showHexbins, geojson])
 
   // Déclenche le calcul TSP (Nearest Neighbor) dans le worker.
   useEffect(() => {
@@ -585,7 +627,7 @@ export default function TreeMap({
     if (!critical.length) return null
 
     const fc       = turf.featureCollection(critical)
-    const buffered = turf.buffer(fc, 15, { units: 'meters' })
+    const buffered = turf.buffer(fc, hotspotRadius, { units: 'meters' })
     if (!buffered?.features?.length) return null
 
     const merged = buffered.features.reduce((acc, feat) =>
@@ -593,7 +635,7 @@ export default function TreeMap({
     , null)
 
     return merged ? turf.featureCollection([merged]) : null
-  }, [showHotspots, geojson])
+  }, [showHotspots, geojson, hotspotRadius])
 
   // Set des IDs sélectionnés pour lookup O(1)
   const selectedIds = useMemo(
@@ -648,7 +690,7 @@ export default function TreeMap({
             center={[feat.geometry.coordinates[1], feat.geometry.coordinates[0]]}
             radius={8}
             pathOptions={{
-              color: dimmed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.7)',
+              color: dimmed ? 'rgba(255,255,255,0.15)' : '#1e293b',
               weight: 1.5,
               fillColor: color,
               fillOpacity: fillO,
@@ -660,12 +702,12 @@ export default function TreeMap({
               mouseover: e => {
                 if (dimmed) return
                 e.target.setRadius(13)
-                e.target.setStyle({ weight: 2.5, color: 'white' })
+                e.target.setStyle({ weight: 2.5, color: '#1e293b' })
               },
               mouseout: e => {
                 if (dimmed) return
                 e.target.setRadius(8)
-                e.target.setStyle({ weight: 1.5, color: 'rgba(255,255,255,0.7)' })
+                e.target.setStyle({ weight: 1.5, color: '#1e293b' })
               },
             }}
           >
@@ -675,23 +717,18 @@ export default function TreeMap({
       }
 
       if (feat.geometry.type === 'Polygon' || feat.geometry.type === 'MultiPolygon') {
-        const polyFillO = dimmed ? 0.08 : 0.55
         return (
           <Polygon
             key={key}
             positions={reverseCoordinates(feat.geometry.coordinates)}
             pathOptions={{
-              color: dimmed ? 'rgba(255,255,255,0.1)' : color,
-              weight: dimmed ? 0.5 : 1.5,
-              fillColor: color,
-              fillOpacity: polyFillO,
-              opacity: strokeO,
+              stroke:      false,
+              fillColor:   color,
+              fillOpacity: dimmed ? 0.08 : 1,
             }}
             {...paneProps}
             eventHandlers={{
-              click:     () => fetchHistory(p.id),
-              mouseover: e => { if (!dimmed) e.target.setStyle({ fillOpacity: 0.85, weight: 2.5 }) },
-              mouseout:  e => { if (!dimmed) e.target.setStyle({ fillOpacity: 0.55, weight: 1.5 }) },
+              click: () => fetchHistory(p.id),
             }}
           >
             <TreePopup p={p} color={color} history={history} />
@@ -774,7 +811,7 @@ export default function TreeMap({
             <LayersControl.Overlay checked name="Orthomosaïque Thermique">
               <LayerGroup>
                 <GeoRasterRenderer
-                  missionId={currentId} orthoType="thermal" opacity={0.8}
+                  missionId={currentId} orthoType="thermal" opacity={0.9}
                   pane={isCompareMode ? 'left-pane' : 'overlayPane'}
                 />
               </LayerGroup>
@@ -784,7 +821,7 @@ export default function TreeMap({
             <LayersControl.Overlay checked name="Orthomosaïque Thermique">
               <TileLayer
                 url={`http://localhost:8000/tiles/${currentId}/thermal_tiles/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20}
+                maxZoom={24} maxNativeZoom={20} opacity={0.9}
                 pane={isCompareMode ? 'left-pane' : 'overlayPane'}
               />
             </LayersControl.Overlay>
@@ -809,7 +846,7 @@ export default function TreeMap({
           {isCompareMode && compareId && compareMission?.ortho_formats?.thermal === 'tif' && (
             <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
               <LayerGroup>
-                <GeoRasterRenderer missionId={compareId} orthoType="thermal" opacity={0.8} pane="right-pane" />
+                <GeoRasterRenderer missionId={compareId} orthoType="thermal" opacity={0.9} pane="right-pane" />
               </LayerGroup>
             </LayersControl.Overlay>
           )}
@@ -817,7 +854,7 @@ export default function TreeMap({
             <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
               <TileLayer
                 url={`http://localhost:8000/tiles/${compareId}/thermal_tiles/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20} pane="right-pane"
+                maxZoom={24} maxNativeZoom={20} opacity={0.9} pane="right-pane"
               />
             </LayersControl.Overlay>
           )}
@@ -833,6 +870,17 @@ export default function TreeMap({
           )}
 
         </LayersControl>
+
+        {/* ── Hexbin : z405, entre ortho et secteurs ── */}
+        <Pane name="hexbin-pane" style={{ zIndex: 405 }} />
+        {hexbinGrid && (
+          <GeoJSON
+            key={`hexbin-${hexbinGrid.features.length}-${geojson?.features?.length ?? 0}`}
+            data={hexbinGrid}
+            style={hexbinStyleFn}
+            pane="hexbin-pane"
+          />
+        )}
 
         {/* ── Secteurs K-Means : z410, au-dessus de l'ortho (z400), sous IDW (z420) ── */}
         <Pane name="sectors-pane" style={{ zIndex: 410 }} />
@@ -915,13 +963,16 @@ export default function TreeMap({
         />
       )}
 
+      {/* ── Widget météo — coin inférieur droit, au-dessus de l'attribution Leaflet ── */}
+      <WeatherWidget geojson={geojson} />
+
       {/* ── Overlay "Calcul spatial en cours…" — affiché pendant les traitements worker ── */}
       {pendingCalcs.size > 0 && (
         <div className="geo-calc-overlay">
           <div className="geo-calc-spinner" />
           <span>
             Calcul spatial en cours…
-            {' '}({[...pendingCalcs].map(t => ({ IDW: 'IDW', KMEANS: 'Secteurs', TSP: 'Tournée' }[t] ?? t)).join(', ')})
+            {' '}({[...pendingCalcs].map(t => ({ IDW: 'IDW', KMEANS: 'Secteurs', TSP: 'Tournée', HEXBIN: 'Hexbin' }[t] ?? t)).join(', ')})
           </span>
         </div>
       )}

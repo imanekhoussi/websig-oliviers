@@ -129,13 +129,23 @@ a { color: inherit; }
   box-shadow: var(--shadow-soft);
 }
 
-.brand { display: flex; align-items: center; gap: var(--s2); }
-.brand-icon { font-size: 16px; color: var(--primary); line-height: 1; }
+.brand {
+  display: flex; align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.brand-logo {
+  height: 44px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.05));
+  display: block;
+}
 .brand h1 {
-  font-size: var(--fs-base);
+  font-size: 18px;
   font-weight: 700;
   color: var(--text-main);
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
 }
 
@@ -282,10 +292,10 @@ a { color: inherit; }
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: var(--s4);
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: var(--s3);
+  gap: 10px;
   scrollbar-width: thin;
   scrollbar-color: var(--border-light) transparent;
 }
@@ -508,7 +518,7 @@ a { color: inherit; }
 /* ── 10. BOUTONS D'ANALYSE (panneau gauche) ─────────── */
 
 /* Base commune */
-.btn-hotspots, .btn-idw, .btn-route, .btn-mcda, .btn-sectors {
+.btn-hotspots, .btn-idw, .btn-route, .btn-mcda, .btn-sectors, .btn-hexbin {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -529,7 +539,7 @@ a { color: inherit; }
 }
 
 .btn-hotspots:hover, .btn-idw:hover, .btn-route:hover,
-.btn-mcda:hover, .btn-sectors:hover {
+.btn-mcda:hover, .btn-sectors:hover, .btn-hexbin:hover {
   border-color: var(--border-medium);
   box-shadow: var(--shadow-card);
   background: var(--bg-raised);
@@ -566,6 +576,12 @@ a { color: inherit; }
   color: #15803d;
   box-shadow: 0 0 0 3px rgba(22,163,74,0.08);
 }
+.btn-hexbin.active {
+  background: #fdf4ff;
+  border-color: rgba(168,85,247,0.4);
+  color: #7e22ce;
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.08);
+}
 
 /* Bouton Comparer */
 .btn-compare {
@@ -601,8 +617,8 @@ a { color: inherit; }
 .compare-select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-dim); }
 
 /* ── 11. PANNEAU TENDANCES ──────────────────────────── */
-.trend-panel  { padding: var(--s4); }
-.trend-header { margin-bottom: var(--s4); }
+.trend-panel  { padding: 10px 16px; }
+.trend-header { margin-bottom: 8px; }
 .trend-header h3 {
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -614,7 +630,7 @@ a { color: inherit; }
 .trend-subtitle { font-size: var(--fs-sm); color: var(--text-muted); }
 .trend-current {
   display: flex; justify-content: space-between; align-items: center;
-  margin-top: var(--s3); padding: var(--s2) var(--s3);
+  margin-top: 8px; padding: 4px 12px;
   background: var(--bg-raised); border-radius: var(--radius-md);
   border: 1px solid var(--border-light);
 }
@@ -622,7 +638,7 @@ a { color: inherit; }
 .trend-value { font-size: var(--fs-sm); font-weight: 700; }
 .trend-legend {
   display: flex; align-items: center;
-  gap: var(--s2); margin-top: var(--s3);
+  gap: var(--s2); margin-top: 8px;
   font-size: var(--fs-xs); color: var(--text-muted);
 }
 .trend-legend .swatch { border-radius: 50%; width: 10px; height: 10px; flex-shrink: 0; }
@@ -633,7 +649,7 @@ a { color: inherit; }
   background: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  padding: var(--s3) var(--s4);
+  padding: 10px 16px;
   box-shadow: var(--shadow-card);
 }
 
@@ -643,10 +659,10 @@ a { color: inherit; }
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.9px;
-  margin-bottom: var(--s2);
+  margin-bottom: 6px;
 }
 
-.legend-items { display: flex; flex-direction: column; gap: 2px; }
+.legend-items { display: flex; flex-direction: column; gap: 0px; }
 
 .legend-item {
   display: flex;
@@ -655,7 +671,7 @@ a { color: inherit; }
   font-size: var(--fs-sm);
   color: var(--text-main);
   cursor: pointer;
-  padding: 5px var(--s2);
+  padding: 3px 8px;
   border-radius: var(--radius-md);
   transition: background 0.15s, opacity 0.15s;
   user-select: none;
@@ -1603,10 +1619,84 @@ a { color: inherit; }
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 6px; font-size: var(--fs-xs); color: var(--text-main);
 }
-.mcda-pct { font-weight: 700; color: var(--primary); min-width: 38px; text-align: right; }
-.mcda-range {
-  width: 100%; accent-color: var(--primary); cursor: pointer; height: 4px;
+.mcda-pct {
+  font-weight: 700; color: var(--primary);
+  min-width: 38px; text-align: right;
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-dim);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
 }
+.mcda-criterion-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-xs); color: var(--text-main);
+}
+
+/* ── Slider custom cross-browser ── */
+.mcda-range {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 20px;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Track — WebKit */
+.mcda-range::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--border-light);
+  border-radius: 3px;
+}
+/* Track — Firefox */
+.mcda-range::-moz-range-track {
+  height: 6px;
+  background: var(--border-light);
+  border-radius: 3px;
+  border: none;
+}
+
+/* Thumb — WebKit */
+.mcda-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  background: var(--bg-surface);
+  border: 2px solid var(--primary);
+  border-radius: 50%;
+  margin-top: -5px;
+  cursor: grab;
+  box-shadow: var(--shadow-soft);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.mcda-range::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 4px var(--primary-dim);
+}
+.mcda-range::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.05);
+}
+
+/* Thumb — Firefox */
+.mcda-range::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  background: var(--bg-surface);
+  border: 2px solid var(--primary);
+  border-radius: 50%;
+  cursor: grab;
+  box-shadow: var(--shadow-soft);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.mcda-range::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 4px var(--primary-dim);
+}
+.mcda-range::-moz-range-thumb:active { cursor: grabbing; }
 .mcda-legend-row {
   margin-top: var(--s3); padding-top: var(--s3);
   border-top: 1px solid var(--border-light);
@@ -1650,6 +1740,8 @@ a { color: inherit; }
 .leaflet-draw-toolbar a:hover { background-color: var(--bg-raised) !important; }
 .leaflet-draw-tooltip {
   background: var(--bg-surface) !important;
+  border: 1px solid var(--border-medium) !important;
+  box-shadow: var(--shadow-soft) !important;
   color: var(--text-main) !important;
   border: 1px solid var(--border-light) !important;
   box-shadow: var(--shadow-card) !important;
@@ -1657,6 +1749,11 @@ a { color: inherit; }
   font-size: var(--fs-xs) !important;
 }
 .leaflet-draw-tooltip::before { border-right-color: var(--bg-surface) !important; }
+.leaflet-draw-tooltip-subtext {
+  color: var(--primary) !important;
+  font-weight: 700 !important;
+  font-size: var(--fs-xs) !important;
+}
 .leaflet-draw-actions a {
   background-color: var(--bg-raised) !important;
   color: var(--text-main) !important;
@@ -2011,9 +2108,9 @@ a { color: inherit; }
 /* Grille MIN – MAX : deux colonnes égales + séparateur central fixe */
 .mfo-criterion-inputs {
   display: grid;
-  grid-template-columns: 1fr 16px 1fr;
+  grid-template-columns: 1fr 14px 1fr;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
 }
 .mfo-input-sep {
   text-align: center;
@@ -2024,13 +2121,13 @@ a { color: inherit; }
 /* Input numérique compact — fond Slate 50, bordure fine, centré */
 .mfo-input {
   width: 100%;
-  height: 26px;
-  padding: 0 6px;
+  height: 24px;
+  padding: 0 5px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-light);
   background: var(--bg-raised);       /* #f8fafc — Slate 50 */
   color: var(--text-main);
-  font-size: 11px; font-weight: 600;
+  font-size: 10px; font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: center;
   outline: none;
@@ -2105,7 +2202,254 @@ a { color: inherit; }
 }
 .mfo-no-results-icon { font-size: 13px; flex-shrink: 0; }
 
-/* ── 32. RESPONSIVE ─────────────────────────────────────────────────────── */
+/* ── 32. WIDGET MÉTÉO ───────────────────────────────────────────────────── */
+
+.weather-widget {
+  position: absolute;
+  bottom: 30px; right: 10px;
+  z-index: 1000;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(203, 213, 225, 0.7);
+  border-radius: 10px;
+  padding: 6px 10px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.10);
+  pointer-events: none;
+  min-width: 180px;
+}
+.ww-header {
+  display: flex; align-items: center; gap: 5px;
+  margin-bottom: 4px;
+}
+.ww-icon-main { color: #f59e0b; flex-shrink: 0; }
+.ww-location {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.8px;
+}
+.ww-metrics {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text);
+}
+.ww-metric {
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.ww-metric strong { font-weight: 700; }
+.ww-icon.temp  { color: #ef4444; }
+.ww-icon.hum   { color: #3b82f6; }
+.ww-icon.wind  { color: #64748b; }
+.ww-sep { color: var(--text-muted); font-size: 10px; }
+
+/* ── 32b. PARAMÈTRES D'OUTILS SPATIAUX ─────────────────────────────────── */
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.tool-settings {
+  background: var(--bg-raised);
+  border-left: 3px solid var(--primary);
+  padding: 10px 14px;
+  margin-top: -6px;
+  margin-bottom: 12px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  animation: slide-down 0.2s ease;
+}
+
+.tool-settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.tool-settings-value {
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-dim);
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  min-width: 32px;
+  text-align: center;
+}
+
+.tool-settings-hint {
+  font-size: 10px;
+  color: var(--text-subtle, #94a3b8);
+  margin-top: 5px;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* ── 33. ANALYTICS MODAL ────────────────────────────────────────────────── */
+
+/* Backdrop — z-index > 10000 pour passer au-dessus des contrôles Leaflet */
+.am-backdrop {
+  position: fixed; inset: 0; z-index: 20000 !important;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+
+/* Panel */
+.am-panel {
+  background: var(--glass-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.22);
+  width: 100%; max-width: 1000px;
+  max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.am-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.am-title {
+  font-size: var(--fs-sm); font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+  margin: 0;
+}
+.am-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); padding: 4px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.am-close:hover { background: var(--bg-raised); color: var(--text); }
+
+/* Body */
+.am-body {
+  flex: 1; overflow-y: auto;
+  padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+/* 2-column grid */
+.am-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* Cards */
+.am-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.am-card-full {
+  grid-column: 1 / -1;
+}
+.am-card-title {
+  font-size: var(--fs-xs); font-weight: 700;
+  color: var(--text);
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 0 4px;
+}
+
+/* Chart container — fixed height so Recharts renders */
+.am-chart-wrap {
+  width: 100%; height: 250px;
+}
+
+/* Range row (input pairs) */
+.am-range-row {
+  display: flex; gap: 8px; align-items: center;
+  font-size: var(--fs-xs); color: var(--text-muted);
+}
+.am-range-row input {
+  width: 80px; padding: 4px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--glass-bg); color: var(--text);
+  font-size: var(--fs-xs);
+  outline: none;
+}
+.am-range-row input:focus { border-color: var(--primary); }
+
+/* Misc helpers */
+.am-footnote {
+  font-size: 11px; color: var(--text-muted); text-align: center;
+  line-height: 1.5; margin: 0;
+}
+.am-empty {
+  font-size: var(--fs-xs); color: var(--text-muted);
+  text-align: center; padding: 24px 0;
+}
+.am-muted { color: var(--text-muted); }
+.am-loading-badge {
+  font-size: 11px; color: #94a3b8; font-weight: 400;
+}
+
+/* Status badges */
+.am-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 600;
+  border-radius: 6px; padding: 2px 8px;
+  border: 1px solid;
+}
+.am-badge-ok {
+  background: rgba(16,185,129,0.12); color: #10b981;
+  border-color: rgba(16,185,129,0.25);
+}
+.am-badge-warn {
+  background: rgba(231,76,60,0.12); color: #e74c3c;
+  border-color: rgba(231,76,60,0.25);
+}
+
+/* Chergui layout */
+.am-chergui-layout {
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* Water balance inner 2-col grid */
+.am-wb-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.am-wb-inputs {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.am-wb-chart {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.am-wb-chart .am-chart-wrap { height: 200px; }
+
+/* Primary button */
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+  background: var(--primary);
+  color: #fff;
+  border: none; border-radius: var(--radius-md);
+  padding: 9px 16px;
+  font-size: var(--fs-xs); font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+  line-height: 1;
+}
+.btn-primary:hover {
+  background: #1d4ed8;
+  box-shadow: 0 4px 12px rgba(37,99,235,0.25);
+}
+.btn-primary:active { background: #1e40af; }
+
 @media (max-width: 1200px) { :root { --panel-w: 280px; } }
 
 @media (max-width: 900px) {

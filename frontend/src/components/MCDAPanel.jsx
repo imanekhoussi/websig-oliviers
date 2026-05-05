@@ -1,14 +1,19 @@
+import { LuDroplets, LuRuler } from 'react-icons/lu'
+
 export default function MCDAPanel({ weightStress, weightHeight, onChange }) {
   return (
     <div className="mcda-panel">
       <p className="mcda-description">
-        Ajustez les poids pour calculer un indice de vulnérabilité global (AHP).
-        La somme des deux critères est toujours égale à 100 %.
+        Modélisation AHP : Équilibrez l'importance relative des critères.
+        Le système verrouille automatiquement la somme à 100 %.
       </p>
 
       <div className="mcda-slider-row">
         <div className="mcda-slider-meta">
-          <span>💧 Stress hydrique</span>
+          <span className="mcda-criterion-label">
+            <LuDroplets size={14} style={{ color: 'var(--primary)' }} />
+            Stress hydrique
+          </span>
           <span className="mcda-pct">{weightStress} %</span>
         </div>
         <input
@@ -20,7 +25,10 @@ export default function MCDAPanel({ weightStress, weightHeight, onChange }) {
 
       <div className="mcda-slider-row">
         <div className="mcda-slider-meta">
-          <span>📏 Vulnérabilité hauteur</span>
+          <span className="mcda-criterion-label">
+            <LuRuler size={14} style={{ color: 'var(--text-muted)' }} />
+            Vulnérabilité hauteur
+          </span>
           <span className="mcda-pct">{weightHeight} %</span>
         </div>
         <input
