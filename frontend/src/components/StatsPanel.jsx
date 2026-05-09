@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, Cell, CartesianGrid,
+  ResponsiveContainer, Cell, CartesianGrid, LabelList,
 } from 'recharts'
 import { STRESS_COLORS } from '../constants'
 import { exportXlsxUrl, exportPdfUrl } from '../api'
@@ -46,6 +46,28 @@ export default function StatsPanel({
 }) {
   const isCompare = !!(statsCompare && missionCompare)
   const [showAnalytics, setShowAnalytics] = useState(false)
+
+  const stressChartData = useMemo(() => {
+    if (!stats?.stress_breakdown) return []
+    const featureSrc = isZonalActive && features?.length ? features : allFeatures
+    const cwsiByClass = {}
+    featureSrc.forEach(f => {
+      const { stress, cwsi } = f.properties
+      if (stress && cwsi != null) {
+        if (!cwsiByClass[stress]) cwsiByClass[stress] = []
+        cwsiByClass[stress].push(cwsi)
+      }
+    })
+    return stats.stress_breakdown.map(s => {
+      const vals = cwsiByClass[s.classe] ?? []
+      const avg  = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+      return {
+        ...s,
+        label:   SHORT_STRESS[s.classe] ?? s.classe,
+        avgCwsi: avg != null ? parseFloat(avg.toFixed(2)) : null,
+      }
+    })
+  }, [stats?.stress_breakdown, allFeatures, features, isZonalActive])
 
   if (!mission) {
     return (
@@ -173,11 +195,11 @@ export default function StatsPanel({
 
       {/* ── Répartition stress ── */}
       <h3>Répartition par stress</h3>
-      <div style={{ width: '100%', height: 200 }}>
+      <div style={{ width: '100%', height: 210 }}>
         <ResponsiveContainer>
           <BarChart
-            data={stats.stress_breakdown.map(s => ({ ...s, label: SHORT_STRESS[s.classe] ?? s.classe }))}
-            margin={{ top: 6, right: 6, left: 15, bottom: 20 }}
+            data={stressChartData}
+            margin={{ top: 24, right: 6, left: 15, bottom: 20 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
             <XAxis
@@ -195,9 +217,16 @@ export default function StatsPanel({
             />
             <Tooltip content={<StressTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
             <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-              {stats.stress_breakdown.map((e, i) => (
+              {stressChartData.map((e, i) => (
                 <Cell key={i} fill={e.color} fillOpacity={0.88} />
               ))}
+              <LabelList
+                dataKey="avgCwsi"
+                position="top"
+                formatter={val => val != null ? `Moy: ${val}` : ''}
+                fill="var(--text-main)"
+                fontSize={11}
+              />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

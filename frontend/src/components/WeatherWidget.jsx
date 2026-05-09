@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { LuThermometer, LuDroplet, LuWind, LuCloudSun } from 'react-icons/lu'
+import { LuThermometer, LuDroplet, LuWind, LuCloudSun, LuCloudRain } from 'react-icons/lu'
 import * as turf from '@turf/turf'
 
 const DEFAULT_LAT = 35.76
@@ -27,7 +27,7 @@ export default function WeatherWidget({ geojson }) {
     fetch(
       `https://api.open-meteo.com/v1/forecast` +
       `?latitude=${lat.toFixed(5)}&longitude=${lon.toFixed(5)}` +
-      `&current=temperature_2m,relative_humidity_2m,wind_speed_10m` +
+      `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation` +
       `&timezone=Africa%2FCasablanca`
     )
       .then(r => r.json())
@@ -52,6 +52,11 @@ export default function WeatherWidget({ geojson }) {
         <span className="ww-metric">
           <LuDroplet size={11} className="ww-icon hum" />
           <strong>{weather.relative_humidity_2m} %</strong>
+        </span>
+        <span className="ww-sep">·</span>
+        <span className="ww-metric">
+          <LuCloudRain size={11} className="ww-icon rain" />
+          <strong>{weather.precipitation?.toFixed(1) ?? '0.0'} mm</strong>
         </span>
         <span className="ww-sep">·</span>
         <span className="ww-metric">

@@ -57,13 +57,17 @@ function GlassTip({ active, payload, label, formatter }) {
 function CwsiTip(props)     { return <GlassTip {...props} /> }
 function ForecastTip(props) { return <GlassTip {...props} formatter={v => `${v} m³`} /> }
 
-function ScatterTip({ active, payload }) {
+function ScatterTip({ active, payload, xMetric = 'height' }) {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
+  const xLabel = xMetric === 'height' ? 'Hauteur' : 'Circonf.'
+  const xValue = xMetric === 'height'
+    ? `${d?.hauteur != null ? d.hauteur.toFixed(1) : '—'} m`
+    : `${d?.circonf != null ? d.circonf.toFixed(2) : '—'} m`
   return (
     <div style={{ ...TIP_STYLE, lineHeight: 1.7, padding: '7px 11px' }}>
       <div style={{ color: '#64748b', marginBottom: 2 }}>Olivier #{d?.id ?? '—'}</div>
-      <div>Hauteur : <b>{d?.hauteur?.toFixed(1)} m</b></div>
+      <div>{xLabel} : <b>{xValue}</b></div>
       <div>CWSI : <b style={{ color: d?.color }}>{d?.cwsi?.toFixed(3)}</b></div>
     </div>
   )
@@ -106,6 +110,7 @@ export default function AnalyticsModal({
   const [isFetchingMeteo,      setIsFetchingMeteo]      = useState(false)
   const [cherguiData,          setCherguiData]          = useState(null)
   const [isLoadingChergui,     setIsLoadingChergui]     = useState(false)
+  const [xMetric,              setXMetric]              = useState('height') // 'height' | 'circumference'
 
   // ── Fetch ET0 Penman-Monteith ──────────────────────────────────────────────
   useEffect(() => {
@@ -179,12 +184,19 @@ export default function AnalyticsModal({
   const scatterData = useMemo(() => {
     const src = isZonalActive ? (features ?? []) : allFeatures
     return src
-      .filter(f => f.properties.hauteur != null && f.properties.cwsi != null)
+      .filter(f => {
+        const p = f.properties
+        if (p.cwsi == null) return false
+        return xMetric === 'height' ? p.hauteur != null : p.circonf != null
+      })
       .map(f => ({
-        id: f.properties.id, hauteur: f.properties.hauteur, cwsi: f.properties.cwsi,
-        color: STRESS_COLORS[f.properties.stress] || STRESS_COLORS.inconnu,
+        id:      f.properties.id,
+        hauteur: f.properties.hauteur,
+        circonf: f.properties.circonf,
+        cwsi:    f.properties.cwsi,
+        color:   STRESS_COLORS[f.properties.stress] || STRESS_COLORS.inconnu,
       }))
-  }, [isZonalActive, features, allFeatures])
+  }, [isZonalActive, features, allFeatures, xMetric])
 
   const cherguiDays = useMemo(() => (cherguiData || []).filter(d => d.isChergui), [cherguiData])
 
@@ -240,12 +252,29 @@ export default function AnalyticsModal({
               </div>
             </div>
 
-            {/* ── Scatter Plot Hauteur × CWSI ── */}
+            {/* ── Scatter Plot CWSI × métrique sélectionnée ── */}
             <div className="am-card">
               <h4 className="am-card-title">
                 <LuGitBranchPlus size={12} style={{ color: 'var(--primary)' }} />
-                Corrélation Hauteur / CWSI
+                Corrélation {xMetric === 'height' ? 'Hauteur' : 'Circonférence'} / CWSI
               </h4>
+
+              {/* Toggle de sélection de la métrique X */}
+              <div className="scatter-metric-toggle">
+                <button
+                  className={xMetric === 'height' ? 'active' : ''}
+                  onClick={() => setXMetric('height')}
+                >
+                  Hauteur (m)
+                </button>
+                <button
+                  className={xMetric === 'circumference' ? 'active' : ''}
+                  onClick={() => setXMetric('circumference')}
+                >
+                  Envergure / Circonférence
+                </button>
+              </div>
+
               {scatterData.length >= 2 ? (
                 <>
                   <div className="am-chart-wrap">
@@ -253,16 +282,23 @@ export default function AnalyticsModal({
                       <ScatterChart margin={{ top: 6, right: 10, left: 0, bottom: 6 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.3)" />
                         <XAxis
-                          dataKey="hauteur" type="number" name="Hauteur" unit=" m"
+                          dataKey={xMetric === 'height' ? 'hauteur' : 'circonf'}
+                          type="number"
+                          name={xMetric === 'height' ? 'Hauteur' : 'Circonf.'}
+                          unit={xMetric === 'height' ? ' m' : ' m'}
                           fontSize={11} tick={{ fill: '#94a3b8' }} tickLine={false}
-                          axisLine={{ stroke: 'rgba(148,163,184,0.15)' }} domain={['auto','auto']}
+                          axisLine={{ stroke: 'rgba(148,163,184,0.15)' }}
+                          domain={xMetric === 'height' ? ['auto', 'auto'] : [0, 15]}
                         />
                         <YAxis
                           dataKey="cwsi" type="number" name="CWSI" domain={[0, 1]}
                           fontSize={11} tick={{ fill: '#94a3b8' }} tickLine={false} axisLine={false} width={40}
                         />
                         <ZAxis range={[28, 28]} />
-                        <Tooltip content={<ScatterTip />} cursor={{ strokeDasharray: '3 3' }} />
+                        <Tooltip
+                          content={<ScatterTip xMetric={xMetric} />}
+                          cursor={{ strokeDasharray: '3 3' }}
+                        />
                         <Scatter
                           data={scatterData}
                           shape={({ cx, cy, payload }) => (
@@ -276,7 +312,11 @@ export default function AnalyticsModal({
                   <p className="am-footnote">Chaque point = un olivier · couleur = niveau de stress</p>
                 </>
               ) : (
-                <div className="am-empty">Données insuffisantes (min. 2 arbres requis).</div>
+                <div className="am-empty">
+                  {xMetric === 'circumference'
+                    ? 'Aucun arbre avec une donnée de circonférence.'
+                    : 'Données insuffisantes (min. 2 arbres requis).'}
+                </div>
               )}
               <div className="am-range-row">
                 <span style={{ display:'flex', alignItems:'center', gap:4 }}>

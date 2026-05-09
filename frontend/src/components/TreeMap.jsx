@@ -811,7 +811,7 @@ export default function TreeMap({
             <LayersControl.Overlay checked name="Orthomosaïque Thermique">
               <LayerGroup>
                 <GeoRasterRenderer
-                  missionId={currentId} orthoType="thermal" opacity={0.9}
+                  missionId={currentId} orthoType="thermal" opacity={1}
                   pane={isCompareMode ? 'left-pane' : 'overlayPane'}
                 />
               </LayerGroup>
@@ -821,7 +821,7 @@ export default function TreeMap({
             <LayersControl.Overlay checked name="Orthomosaïque Thermique">
               <TileLayer
                 url={`http://localhost:8000/tiles/${currentId}/thermal_tiles/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20} opacity={0.9}
+                maxZoom={24} maxNativeZoom={20} opacity={1}
                 pane={isCompareMode ? 'left-pane' : 'overlayPane'}
               />
             </LayersControl.Overlay>
@@ -846,7 +846,7 @@ export default function TreeMap({
           {isCompareMode && compareId && compareMission?.ortho_formats?.thermal === 'tif' && (
             <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
               <LayerGroup>
-                <GeoRasterRenderer missionId={compareId} orthoType="thermal" opacity={0.9} pane="right-pane" />
+                <GeoRasterRenderer missionId={compareId} orthoType="thermal" opacity={1} pane="right-pane" />
               </LayerGroup>
             </LayersControl.Overlay>
           )}
@@ -854,7 +854,7 @@ export default function TreeMap({
             <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
               <TileLayer
                 url={`http://localhost:8000/tiles/${compareId}/thermal_tiles/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20} opacity={0.9} pane="right-pane"
+                maxZoom={24} maxNativeZoom={20} opacity={1} pane="right-pane"
               />
             </LayersControl.Overlay>
           )}

@@ -2446,6 +2446,35 @@ a { color: inherit; }
   font-size: 11px; color: var(--text-muted); text-align: center;
   line-height: 1.5; margin: 0;
 }
+/* Toggle de sélection de la métrique X (Scatter) */
+.scatter-metric-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.scatter-metric-toggle button {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border-medium);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.scatter-metric-toggle button:hover {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.scatter-metric-toggle button.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
 .am-empty {
   font-size: var(--fs-xs); color: var(--text-muted);
   text-align: center; padding: 24px 0;
