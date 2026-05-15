@@ -7,8 +7,9 @@ import { STRESS_COLORS } from '../constants'
 import { exportXlsxUrl, exportPdfUrl } from '../api'
 import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind, LuChartBar } from 'react-icons/lu'
 import AnalyticsModal from './AnalyticsModal'
+import AiAdvisorModal from './AiAdvisorModal'
 
-const SHORT_STRESS = { faible: 'Faible', modere: 'Modéré', eleve: 'Élevé', severe: 'Sévère', inconnu: '—' }
+const SHORT_STRESS = { aucun: 'Aucun', faible: 'Faible', modere: 'Modéré', eleve: 'Élevé', severe: 'Sévère', inconnu: '—' }
 
 function GlassTip({ active, payload, label, formatter }) {
   if (!active || !payload?.length) return null
@@ -46,6 +47,7 @@ export default function StatsPanel({
 }) {
   const isCompare = !!(statsCompare && missionCompare)
   const [showAnalytics, setShowAnalytics] = useState(false)
+  const [showAiModal,   setShowAiModal]   = useState(false)
 
   const stressChartData = useMemo(() => {
     if (!stats?.stress_breakdown) return []
@@ -241,6 +243,22 @@ export default function StatsPanel({
         <LuChartBar size={14} style={{ marginRight: 6 }} />
         Analyses détaillées
       </button>
+
+      {/* ── Bouton conseil IA ── */}
+      <button
+        className="ai-advice-btn"
+        onClick={() => setShowAiModal(true)}
+      >
+        ✨ Générer le conseil agronomique par IA
+      </button>
+
+      {/* ── Modal conseiller IA ── */}
+      {showAiModal && (
+        <AiAdvisorModal
+          mission={mission}
+          onClose={() => setShowAiModal(false)}
+        />
+      )}
 
       {/* ── Modal analyses ── */}
       {showAnalytics && (

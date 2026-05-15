@@ -3,13 +3,26 @@
   "nom": "Mission 2026-04-21",
   "notes": "",
   "meteo": {
-    "temp_air": null,
+    "temp_air": 20,
     "humidite": null,
     "vent": null
   },
   "created_at": "2026-04-21T17:23:51",
   "ortho_formats": {
     "rgb": "zip",
-    "thermal": "zip"
-  }
+    "thermal": "tif"
+  },
+  "ortho_status": {
+    "thermal": {
+      "has_tif": true,
+      "has_zip": false
+    }
+  },
+  "cwsi_calibration": {
+    "method": "bian_2019",
+    "t_wet": 26.4424,
+    "t_dry": 41.9163,
+    "computed_at": "2026-05-09T17:57:18+00:00"
+  },
+  "has_thermal_zip": true
 }

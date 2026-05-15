@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { MapContainer, TileLayer, LayerGroup, FeatureGroup, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap } from 'react-leaflet'
-import parseGeoraster from 'georaster'
-import GeoRasterLayer from 'georaster-layer-for-leaflet'
+import { MapContainer, TileLayer, LayerGroup, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap } from 'react-leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import 'leaflet-draw'
@@ -293,10 +291,11 @@ const HOTSPOT_STYLE = {
   fillOpacity: 0.2,
 }
 
-/** Classe un score CWSI en niveau de stress et retourne la couleur associée (4 classes) */
+/** Classe un score CWSI en niveau de stress et retourne la couleur associée (5 classes) */
 function cwsiToStressColor(cwsi) {
   if (cwsi == null) return STRESS_COLORS.inconnu
-  if (cwsi < 0.25)  return STRESS_COLORS.faible
+  if (cwsi < 0.20)  return STRESS_COLORS.aucun
+  if (cwsi < 0.35)  return STRESS_COLORS.faible
   if (cwsi < 0.50)  return STRESS_COLORS.modere
   if (cwsi < 0.75)  return STRESS_COLORS.eleve
   return STRESS_COLORS.severe
@@ -308,92 +307,6 @@ const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ec4899', '#
 function sectorStyleFn(feature) {
   const color = SECTOR_COLORS[feature?.properties?.cluster_id] ?? '#94a3b8'
   return { color, weight: 2, dashArray: '4, 4', fillColor: color, fillOpacity: 0.2 }
-}
-
-/**
- * Charge un GeoTIFF brut et l'ajoute à la carte via GeoRasterLayer.
- * Doit être rendu comme enfant d'un <LayersControl.Overlay> pour apparaître
- * dans le contrôleur de couches — le parent gère la case à cocher.
- */
-function GeoRasterRenderer({ missionId, orthoType, opacity = 0.8, pane = 'overlayPane' }) {
-  const map = useMap()
-  const tag = `[GeoRaster:${orthoType}]`
-
-  useEffect(() => {
-    if (!missionId) return
-
-    let layer     = null
-    let cancelled = false
-
-    async function load() {
-      const url = `http://localhost:8000/uploads/${missionId}/${orthoType}.tif`
-      console.log(`${tag} 1. Début du fetch TIF… → ${url}`)
-
-      let res
-      try {
-        res = await fetch(url)
-      } catch (err) {
-        console.error(`${tag} Erreur réseau / CORS :`, err)
-        return
-      }
-
-      if (!res.ok) {
-        if (res.status !== 404) {
-          console.error(`${tag} HTTP ${res.status} pour ${url}`)
-        } else {
-          console.log(`${tag} 404 — fichier absent, couche ignorée.`)
-        }
-        return
-      }
-      if (cancelled) return
-
-      const arrayBuffer = await res.arrayBuffer()
-      if (cancelled) return
-      console.log(`${tag} 2. Buffer reçu, taille :`, arrayBuffer.byteLength)
-
-      let georaster
-      try {
-        georaster = await parseGeoraster(arrayBuffer)
-      } catch (err) {
-        console.error(`${tag} parseGeoraster a échoué :`, err)
-        return
-      }
-      if (cancelled) return
-      console.log(`${tag} 3. GeoRaster parsé :`, georaster)
-
-      layer = new GeoRasterLayer({
-        georaster,
-        opacity,
-        resolution: 256,
-        pane,
-        maxZoom: 24,
-        maxNativeZoom: 20,
-      })
-      layer.addTo(map)
-      console.log(`${tag} 4. Couche ajoutée à la carte.`)
-
-      try {
-        const bounds = layer.getBounds()
-        if (bounds && bounds.isValid()) {
-          map.fitBounds(bounds)
-          console.log(`${tag} 5. fitBounds effectué.`)
-        } else {
-          console.warn(`${tag} getBounds() invalide — zoom manuel nécessaire.`)
-        }
-      } catch (e) {
-        console.warn(`${tag} fitBounds a échoué :`, e)
-      }
-    }
-
-    load()
-
-    return () => {
-      cancelled = true
-      if (layer && map.hasLayer(layer)) map.removeLayer(layer)
-    }
-  }, [missionId, orthoType, map, opacity, tag])
-
-  return null
 }
 
 /** Style Leaflet appliqué à chaque cellule de la grille IDW */
@@ -417,7 +330,7 @@ function hexbinStyleFn(feature) {
 
 export default function TreeMap({
   geojson,
-  activeStress = ['faible', 'modere', 'eleve', 'severe'],
+  activeStress = ['aucun', 'faible', 'modere', 'eleve', 'severe'],
   isCompareMode = false,
   geojsonCompare,
   currentLabel = '',
@@ -644,7 +557,7 @@ export default function TreeMap({
   )
   const hasSelection = selectedTrees !== null
 
-  const KNOWN_CLASSES = new Set(['faible', 'modere', 'eleve', 'severe'])
+  const KNOWN_CLASSES = new Set(['aucun', 'faible', 'modere', 'eleve', 'severe'])
   const visibleFeatures = (geojson?.features ?? []).filter(f => {
     const s = f.properties.stress
     if (!s || !KNOWN_CLASSES.has(s)) return true   // inconnu / héritage → toujours visible
@@ -785,17 +698,7 @@ export default function TreeMap({
             />
           </LayersControl.BaseLayer>
 
-          {/* ── Orthomosaïque RGB — mission courante (left-pane en comparaison) ── */}
-          {currentId && currentMission?.ortho_formats?.rgb === 'tif' && (
-            <LayersControl.Overlay checked name="Orthomosaïque RGB">
-              <LayerGroup>
-                <GeoRasterRenderer
-                  missionId={currentId} orthoType="rgb" opacity={0.8}
-                  pane={isCompareMode ? 'left-pane' : 'overlayPane'}
-                />
-              </LayerGroup>
-            </LayersControl.Overlay>
-          )}
+          {/* ── Orthomosaïque RGB (ZIP tuiles) — mission courante ── */}
           {currentId && currentMission?.ortho_formats?.rgb === 'zip' && (
             <LayersControl.Overlay checked name="Orthomosaïque RGB">
               <TileLayer
@@ -806,21 +709,11 @@ export default function TreeMap({
             </LayersControl.Overlay>
           )}
 
-          {/* ── Orthomosaïque Thermique — mission courante (left-pane en comparaison) ── */}
-          {currentId && currentMission?.ortho_formats?.thermal === 'tif' && (
-            <LayersControl.Overlay checked name="Orthomosaïque Thermique">
-              <LayerGroup>
-                <GeoRasterRenderer
-                  missionId={currentId} orthoType="thermal" opacity={1}
-                  pane={isCompareMode ? 'left-pane' : 'overlayPane'}
-                />
-              </LayerGroup>
-            </LayersControl.Overlay>
-          )}
-          {currentId && currentMission?.ortho_formats?.thermal === 'zip' && (
+          {/* ── Orthomosaïque Thermique (ZIP tuiles) — mission courante ── */}
+          {currentId && currentMission?.has_thermal_zip && (
             <LayersControl.Overlay checked name="Orthomosaïque Thermique">
               <TileLayer
-                url={`http://localhost:8000/tiles/${currentId}/thermal_tiles/{z}/{x}/{y}.png`}
+                url={`http://localhost:8000/tiles/${currentId}/thermal/{z}/{x}/{y}.png`}
                 maxZoom={24} maxNativeZoom={20} opacity={1}
                 pane={isCompareMode ? 'left-pane' : 'overlayPane'}
               />
@@ -828,13 +721,6 @@ export default function TreeMap({
           )}
 
           {/* ── Orthomosaïques — mission comparée (right-pane uniquement) ── */}
-          {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'tif' && (
-            <LayersControl.Overlay checked name="Ortho RGB (comparaison)">
-              <LayerGroup>
-                <GeoRasterRenderer missionId={compareId} orthoType="rgb" opacity={0.8} pane="right-pane" />
-              </LayerGroup>
-            </LayersControl.Overlay>
-          )}
           {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'zip' && (
             <LayersControl.Overlay checked name="Ortho RGB (comparaison)">
               <TileLayer
@@ -843,17 +729,10 @@ export default function TreeMap({
               />
             </LayersControl.Overlay>
           )}
-          {isCompareMode && compareId && compareMission?.ortho_formats?.thermal === 'tif' && (
-            <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
-              <LayerGroup>
-                <GeoRasterRenderer missionId={compareId} orthoType="thermal" opacity={1} pane="right-pane" />
-              </LayerGroup>
-            </LayersControl.Overlay>
-          )}
-          {isCompareMode && compareId && compareMission?.ortho_formats?.thermal === 'zip' && (
+          {isCompareMode && compareId && compareMission?.has_thermal_zip && (
             <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
               <TileLayer
-                url={`http://localhost:8000/tiles/${compareId}/thermal_tiles/{z}/{x}/{y}.png`}
+                url={`http://localhost:8000/tiles/${compareId}/thermal/{z}/{x}/{y}.png`}
                 maxZoom={24} maxNativeZoom={20} opacity={1} pane="right-pane"
               />
             </LayersControl.Overlay>

@@ -2,11 +2,27 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   LuSettings, LuX, LuPlus, LuTrash2, LuUpload,
-  LuCheck, LuFileText, LuSatellite, LuCalendar,
+  LuCheck, LuFileText, LuSatellite, LuCalendar, LuThermometer, LuCloud, LuSlidersHorizontal,
 } from 'react-icons/lu'
-import { createMission, updateMission, deleteMission, uploadShapefile, uploadOrtho, deleteOrtho } from '../api'
+import { createMission, updateMission, deleteMission, uploadShapefile, uploadOrtho, deleteOrtho, computeCwsi } from '../api'
 import { useToast } from '../hooks/useToast'
 import ConfirmModal from './ConfirmModal'
+
+const DEFAULT_THRESHOLDS = {
+  aucun:  [0.00, 0.20],
+  faible: [0.20, 0.35],
+  modere: [0.35, 0.50],
+  eleve:  [0.50, 0.75],
+  severe: [0.75, 1.00],
+}
+
+const THRESH_META = [
+  { key: 'aucun',  label: 'Aucun stress',  color: '#2ecc71' },
+  { key: 'faible', label: 'Stress faible',  color: '#f1c40f' },
+  { key: 'modere', label: 'Stress modéré',  color: '#e67e22' },
+  { key: 'eleve',  label: 'Stress élevé',   color: '#e74c3c' },
+  { key: 'severe', label: 'Stress sévère',  color: '#8e44ad' },
+]
 
 /* ── Panneau d'administration des missions ───────────────────────────────── */
 export default function MissionManager({ missions, onRefresh, onClose, onMissionDeleted }) {
@@ -133,6 +149,49 @@ function MissionDetail({ mission, onRefresh, onDelete }) {
   const [orthoError,      setOrthoError]      = useState(null)
   const [orthoDeleting,   setOrthoDeleting]   = useState(null)
   const [pendingOrtho,    setPendingOrtho]    = useState(null)
+  const [cwsiMethod,      setCwsiMethod]      = useState('empirical')
+  const [isCalculating,   setIsCalculating]   = useState(false)
+  const [progress,        setProgress]        = useState(0)
+  const [meteoForm,       setMeteoForm]       = useState({
+    temp_air: mission.meteo?.temp_air ?? '',
+    humidite: mission.meteo?.humidite ?? '',
+    vent:     mission.meteo?.vent     ?? '',
+  })
+  const [meteoBusy,       setMeteoBusy]       = useState(false)
+  const [threshForm,      setThreshForm]      = useState(
+    mission.cwsi_thresholds
+      ? Object.fromEntries(Object.entries(mission.cwsi_thresholds).map(([k, v]) => [k, [...v]]))
+      : Object.fromEntries(Object.entries(DEFAULT_THRESHOLDS).map(([k, v]) => [k, [...v]]))
+  )
+  const [threshBusy,      setThreshBusy]      = useState(false)
+  const [showCalibration, setShowCalibration] = useState(false)
+  const [showAdvanced,    setShowAdvanced]    = useState(false)
+  const [showThresholds,  setShowThresholds]  = useState(false)
+  const [calcError,       setCalcError]       = useState(null)
+
+  // Vrai uniquement si au moins un champ météo diffère de la valeur enregistrée
+  const toNum = v => (v === '' || v == null) ? null : parseFloat(v)
+  const isMeteoModified =
+    toNum(meteoForm.temp_air) !== (mission.meteo?.temp_air ?? null) ||
+    toNum(meteoForm.humidite) !== (mission.meteo?.humidite ?? null) ||
+    toNum(meteoForm.vent)     !== (mission.meteo?.vent     ?? null)
+
+  async function saveThresholds() {
+    setThreshBusy(true)
+    try {
+      await updateMission(mission.id, { cwsi_thresholds: threshForm })
+      toast('Seuils CWSI enregistrés.', 'success')
+      onRefresh()
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setThreshBusy(false)
+    }
+  }
+
+  function resetThresholds() {
+    setThreshForm(Object.fromEntries(Object.entries(DEFAULT_THRESHOLDS).map(([k, v]) => [k, [...v]])))
+  }
 
   async function saveName() {
     if (nom === mission.nom || nomBusy) return
@@ -164,13 +223,14 @@ function MissionDetail({ mission, onRefresh, onDelete }) {
   }
 
   async function handleDeleteOrtho() {
-    const type = pendingOrtho
+    const { type, fmt } = pendingOrtho
     setPendingOrtho(null)
-    setOrthoDeleting(type); setOrthoError(null)
+    setOrthoDeleting({ type, fmt }); setOrthoError(null)
     try {
-      await deleteOrtho(mission.id, type)
-      const label = type === 'rgb' ? 'RGB' : 'Thermique'
-      toast(`Orthomosaïque ${label} supprimée.`, 'success')
+      await deleteOrtho(mission.id, type, fmt)
+      const label    = type === 'rgb' ? 'RGB' : 'Thermique'
+      const fmtLabel = fmt === 'zip' ? 'Tuiles' : 'GeoTIFF'
+      toast(`${fmtLabel} ${label} supprimé.`, 'success')
       onRefresh()
     } catch (e) {
       setOrthoError(e.message)
@@ -179,14 +239,59 @@ function MissionDetail({ mission, onRefresh, onDelete }) {
     }
   }
 
-  async function handleOrtho(type, file) {
-    const ext = file.name.split('.').pop().toLowerCase()
-    setOrthoUploading({ type, ext }); setOrthoError(null)
+  async function saveMeteo() {
+    setMeteoBusy(true)
+    try {
+      await updateMission(mission.id, {
+        meteo: {
+          temp_air: meteoForm.temp_air !== '' ? parseFloat(meteoForm.temp_air) : null,
+          humidite: meteoForm.humidite !== '' ? parseFloat(meteoForm.humidite) : null,
+          vent:     meteoForm.vent     !== '' ? parseFloat(meteoForm.vent)     : null,
+        },
+      })
+      toast('Conditions météo enregistrées.', 'success')
+      onRefresh()
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setMeteoBusy(false)
+    }
+  }
+
+  async function handleComputeCwsi() {
+    setCalcError(null)
+    setIsCalculating(true)
+    setProgress(20)
+    const t1 = setTimeout(() => setProgress(50), 600)
+    const t2 = setTimeout(() => setProgress(80), 1400)
+    try {
+      const result = await computeCwsi(mission.id, cwsiMethod)
+      setProgress(100)
+      if (result.status === 'already_computed') {
+        toast('CWSI déjà calculé pour cette mission.', 'info')
+      } else {
+        toast(
+          `CWSI calculé sur ${result.n_updated} arbres · T_wet = ${result.t_wet} °C · T_dry = ${result.t_dry} °C`,
+          'success'
+        )
+      }
+      onRefresh()
+    } catch (e) {
+      setCalcError(e.message)
+    } finally {
+      clearTimeout(t1); clearTimeout(t2)
+      setTimeout(() => { setIsCalculating(false); setProgress(0) }, 700)
+    }
+  }
+
+  async function handleOrtho(type, fmt, file) {
+    setOrthoUploading({ type, fmt }); setOrthoError(null)
     try {
       await uploadOrtho(mission.id, type, file)
       const label  = type === 'rgb' ? 'RGB' : 'Thermique'
-      const fmtMsg = ext === 'zip' ? '(tuiles XYZ)' : '(GeoTIFF brut)'
+      const fmtMsg = fmt === 'zip' ? '(tuiles XYZ)' : '(GeoTIFF brut)'
       toast(`Orthomosaïque ${label} ${fmtMsg} importée !`, 'success')
+      onRefresh()
     } catch (e) {
       setOrthoError(e.message)
     } finally {
@@ -257,51 +362,58 @@ function MissionDetail({ mission, onRefresh, onDelete }) {
       <div className="mm-section">
         <h3><LuSatellite size={14} /> Images de la mission</h3>
 
-        {/* ── État + actions pour chaque type d'ortho ── */}
         {['rgb', 'thermal'].map(type => {
-          const fmt   = mission.ortho_formats?.[type] ?? null
-          const label = type === 'rgb' ? 'RGB' : 'Thermique'
-          const busy  = orthoUploading?.type === type || orthoDeleting === type
+          const typeLabel = type === 'rgb' ? 'RGB' : 'Thermique'
+          const hasZip = type === 'thermal'
+            ? (mission.has_thermal_zip ?? false)
+            : ((mission.ortho_status?.[type]?.has_zip) ?? (mission.ortho_formats?.[type] === 'zip'))
+          const fmt = 'zip'
+          const busyUpload = orthoUploading?.type === type && orthoUploading?.fmt === fmt
+          const busyDelete = orthoDeleting?.type  === type && orthoDeleting?.fmt  === fmt
+          const busy = busyUpload || busyDelete
           return (
-            <div key={type} className="ortho-row">
-              <div className="ortho-row-info">
-                <span className="ortho-row-label">{type === 'rgb' ? '🌿' : '🌡'} {label}</span>
-                {fmt === 'tif'  && <span className="ortho-badge ortho-badge-tif">Image brute (TIF)</span>}
-                {fmt === 'zip'  && <span className="ortho-badge ortho-badge-zip">Tuiles (ZIP)</span>}
-                {!fmt           && <span className="ortho-badge ortho-badge-none">Aucun fichier</span>}
-              </div>
-              <div className="ortho-row-actions">
-                {busy ? (
-                  <span className="ortho-row-busy">
-                    <div className="mm-dropzone-spinner" style={{ width: 14, height: 14 }} />
-                    {orthoUploading?.type === type ? 'Import…' : 'Suppression…'}
-                  </span>
+            <div key={type} className="ortho-type-block">
+              <div className="ortho-type-label">{type === 'rgb' ? '🌿' : '🌡'} {typeLabel}</div>
+              <div className="ortho-fmt-row">
+                <span className="ortho-fmt-icon">📁</span>
+                <span className="ortho-fmt-label">Tuiles d&apos;affichage (ZIP)</span>
+                {hasZip ? (
+                  <span className="ortho-fmt-status ortho-fmt-ok">✓ Présent</span>
                 ) : (
-                  <>
-                    <label className="ortho-row-btn ortho-row-btn-upload" title={`Importer ${label}`}>
-                      <LuUpload size={13} />
-                      <input type="file" hidden accept=".zip,.tif,.tiff"
-                        onChange={e => e.target.files[0] && handleOrtho(type, e.target.files[0])} />
-                    </label>
-                    {fmt && (
-                      <button
-                        className="ortho-row-btn ortho-row-btn-delete"
-                        title={`Supprimer l'ortho ${label}`}
-                        onClick={() => setPendingOrtho(type)}
-                      >
-                        <LuTrash2 size={13} />
-                      </button>
-                    )}
-                  </>
+                  <span className="ortho-fmt-status ortho-fmt-missing">— Absent</span>
                 )}
+                <div className="ortho-fmt-actions">
+                  {busy ? (
+                    <span className="ortho-row-busy">
+                      <div className="mm-dropzone-spinner" style={{ width: 12, height: 12 }} />
+                      {busyUpload ? 'Import…' : 'Suppression…'}
+                    </span>
+                  ) : (
+                    <>
+                      <label className="ortho-row-btn ortho-row-btn-upload" title="Importer les tuiles ZIP">
+                        <LuUpload size={12} />
+                        <input
+                          type="file" hidden accept=".zip"
+                          onChange={e => e.target.files[0] && handleOrtho(type, fmt, e.target.files[0])}
+                        />
+                      </label>
+                      {hasZip && (
+                        <button
+                          className="ortho-row-btn ortho-row-btn-delete"
+                          title="Supprimer les tuiles"
+                          onClick={() => setPendingOrtho({ type, fmt })}
+                        >
+                          <LuTrash2 size={12} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           )
         })}
 
-        <p className="ortho-format-hint">
-          Formats : <strong>.zip</strong> (tuiles XYZ) · <strong>.tif/.tiff</strong> (GeoTIFF brut)
-        </p>
         {orthoError && <div className="error">⚠️ {orthoError}</div>}
       </div>
 
@@ -309,12 +421,277 @@ function MissionDetail({ mission, onRefresh, onDelete }) {
       {pendingOrtho && (
         <ConfirmModal
           title="Supprimer l'orthomosaïque"
-          message={`Les fichiers ${pendingOrtho === 'rgb' ? 'RGB' : 'Thermique'} de cette mission seront définitivement supprimés du serveur. Cette action est irréversible.`}
+          message={`Les fichiers ${pendingOrtho.fmt === 'zip' ? 'Tuiles (ZIP)' : 'GeoTIFF (TIF)'} ${pendingOrtho.type === 'rgb' ? 'RGB' : 'Thermique'} seront définitivement supprimés. Cette action est irréversible.`}
           confirmLabel="Supprimer"
           danger
           onConfirm={handleDeleteOrtho}
           onCancel={() => setPendingOrtho(null)}
         />
+      )}
+
+      {/* ── Toggle : paramètres avancés (Météo + CWSI) ── */}
+      <button
+        className="mm-toggle-section"
+        onClick={() => setShowAdvanced(v => !v)}
+      >
+        <span>⚙️ {showAdvanced ? 'Masquer les paramètres de calcul' : 'Modifier les paramètres et recalculer'}</span>
+        <span className="mm-toggle-chevron">{showAdvanced ? '▲' : '▼'}</span>
+      </button>
+
+      {showAdvanced && (
+        <>
+          {/* ── BLOC 1 : Météo éditable ── */}
+          <div className="mm-section mm-section-inset">
+            <h3><LuCloud size={14} /> Conditions météo au vol</h3>
+            <div className="mission-form">
+              <div className="weather-grid">
+                <div className="form-group">
+                  <label>T° air (°C)</label>
+                  <input
+                    type="number" step="0.1" placeholder="ex : 32.5"
+                    value={meteoForm.temp_air}
+                    onChange={e => setMeteoForm(f => ({ ...f, temp_air: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Humidité (%)</label>
+                  <input
+                    type="number" step="1" placeholder="ex : 45"
+                    value={meteoForm.humidite}
+                    onChange={e => setMeteoForm(f => ({ ...f, humidite: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Vent (m/s)</label>
+                  <input
+                    type="number" step="0.1" placeholder="ex : 2.5"
+                    value={meteoForm.vent}
+                    onChange={e => setMeteoForm(f => ({ ...f, vent: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            {isMeteoModified && (
+              <button
+                className="mm-btn-save"
+                onClick={saveMeteo}
+                disabled={meteoBusy}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                <LuCheck size={14} />
+                {meteoBusy ? 'Enregistrement…' : 'Sauvegarder la météo'}
+              </button>
+            )}
+          </div>
+
+          {/* ── BLOC 2 : Calcul CWSI ── */}
+          <div className="mm-section mm-section-inset">
+            <h3><LuThermometer size={14} /> Calcul du stress hydrique (CWSI)</h3>
+
+            {/* Sélecteur de méthode + bouton de calcul */}
+            <div className="cwsi-compute-row">
+              <select
+                className="cwsi-method-select"
+                value={cwsiMethod}
+                onChange={e => setCwsiMethod(e.target.value)}
+                disabled={isCalculating}
+              >
+                <option value="empirical">Méthode Empirique (T_air + 5 °C)</option>
+                <option value="bian_2019">Méthode Statistique (Bian 2019)</option>
+              </select>
+              <button
+                className="cwsi-compute-btn"
+                onClick={handleComputeCwsi}
+                disabled={isCalculating || !mission.has_shapefile}
+                title={
+                  !mission.has_shapefile
+                    ? "Importez d'abord le fichier spatial (avec colonne temp_moy)"
+                    : 'Lancer le calcul CWSI'
+                }
+              >
+                {isCalculating
+                  ? <><div className="mm-dropzone-spinner" style={{ width: 13, height: 13 }} /> Calcul…</>
+                  : '⚡ Recalculer le CWSI'}
+              </button>
+            </div>
+
+            {/* Bouton constantes scientifiques */}
+            <button className="btn-secondary" onClick={() => setShowCalibration(!showCalibration)}>
+              📊 {showCalibration ? 'Masquer' : 'Afficher'} les constantes
+            </button>
+
+            {/* Encart T_wet / T_dry */}
+            {showCalibration && (mission.cwsi_results ?? mission.cwsi_calibration) && (() => {
+              const cal = mission.cwsi_results ?? mission.cwsi_calibration
+              return (
+                <div className="cwsi-sci-panel">
+                  <div className="cwsi-sci-header">
+                    <span className="cwsi-sci-title">Constantes de calibration</span>
+                    <span className="cwsi-sci-date">
+                      {new Date(cal.computed_at).toLocaleString('fr-FR', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <pre className="cwsi-sci-code">{[
+                    `Méthode : ${cal.method === 'empirical' ? 'Empirique (T_air + 5 °C)' : 'Statistique (Bian 2019)'}`,
+                    cal.temp_air != null ? `T_air   : ${cal.temp_air} °C` : null,
+                    `T_wet   : ${cal.t_wet} °C`,
+                    `T_dry   : ${cal.t_dry} °C`,
+                    ``,
+                    `CWSI = (T_feuille − T_wet) / (T_dry − T_wet)`,
+                    `     = clip( résultat, 0.0, 1.0 )`,
+                    cal.n_updated != null ? `` : null,
+                    cal.n_updated != null ? `Arbres traités : ${cal.n_updated} / ${cal.n_trees}` : null,
+                  ].filter(l => l !== null).join('\n')}</pre>
+                </div>
+              )
+            })()}
+
+            {/* Barre de progression */}
+            {isCalculating && (
+              <div className="cwsi-progress-wrap">
+                <div className="cwsi-progress-bar">
+                  <div className="cwsi-progress-fill" style={{ width: `${progress}%` }} />
+                </div>
+                <span className="cwsi-progress-pct">{progress} %</span>
+              </div>
+            )}
+
+            {/* Erreur inline du calcul CWSI */}
+            {calcError && (
+              <div className="cwsi-calc-error">
+                <span className="cwsi-calc-error-icon">⚠️</span>
+                <span>{calcError}</span>
+                <button
+                  className="cwsi-calc-error-close"
+                  onClick={() => setCalcError(null)}
+                  title="Fermer"
+                >✕</button>
+              </div>
+            )}
+
+            {/* Avertissements contextuels */}
+            {cwsiMethod === 'empirical' && mission.meteo?.temp_air == null && (
+              <p className="cwsi-warn">
+                ⚠️ La méthode empirique requiert la température de l&apos;air (T° air).
+                Renseignez-la dans la section Météo ci-dessus.
+              </p>
+            )}
+            {!mission.has_shapefile && (
+              <p className="cwsi-warn">
+                ⚠️ Aucun fichier spatial importé — importez un Shapefile ou GeoPackage contenant la colonne temp_moy.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Bouton toggle constantes scientifiques — toujours accessible */}
+      {mission.cwsi_results && (
+        <button
+          className="mm-toggle-section mm-toggle-section--secondary"
+          onClick={() => setShowCalibration(v => !v)}
+        >
+          <span>📊 {showCalibration ? 'Masquer' : 'Afficher'} les constantes scientifiques</span>
+          <span className="mm-toggle-chevron">{showCalibration ? '▲' : '▼'}</span>
+        </button>
+      )}
+
+      {/* Encart constantes scientifiques */}
+      {showCalibration && mission.cwsi_results && (
+        <div className="cwsi-sci-panel">
+          <div className="cwsi-sci-header">
+            <span className="cwsi-sci-title">Paramètres de calibration</span>
+            <span className="cwsi-sci-date">
+              {new Date(mission.cwsi_results.computed_at).toLocaleString('fr-FR', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit',
+              })}
+            </span>
+          </div>
+          <pre className="cwsi-sci-code">{[
+            `Méthode   : ${mission.cwsi_results.method === 'empirical' ? 'Empirique (T_air + 5 °C)' : 'Statistique (Bian 2019)'}`,
+            mission.cwsi_results.temp_air != null
+              ? `T_air     : ${mission.cwsi_results.temp_air} °C`
+              : null,
+            `T_wet     : ${mission.cwsi_results.t_wet} °C`,
+            `T_dry     : ${mission.cwsi_results.t_dry} °C`,
+            ``,
+            `CWSI = (T_feuille − T_wet) / (T_dry − T_wet)`,
+            `     = clip( résultat, 0.0, 1.0 )`,
+            ``,
+            `Arbres traités : ${mission.cwsi_results.n_updated} / ${mission.cwsi_results.n_trees}`,
+          ].filter(l => l !== null).join('\n')}</pre>
+        </div>
+      )}
+
+      {/* ── Toggle : seuils de stress ── */}
+      <button
+        className="mm-toggle-section mm-toggle-section--secondary"
+        onClick={() => setShowThresholds(v => !v)}
+      >
+        <span>🎛️ {showThresholds ? 'Masquer les seuils' : 'Personnaliser les seuils de stress'}</span>
+        <span className="mm-toggle-chevron">{showThresholds ? '▲' : '▼'}</span>
+      </button>
+
+      {/* ── BLOC 3 : Seuils CWSI personnalisés ── */}
+      {showThresholds && (
+        <div className="mm-section mm-section-inset">
+          <h3><LuSlidersHorizontal size={14} /> Seuils de stress hydrique (CWSI)</h3>
+          <p className="cwsi-thresh-hint">
+            Personnalisez les plages CWSI pour cette mission. La classification des arbres sera recalculée automatiquement.
+          </p>
+          <table className="cwsi-thresh-table">
+            <thead>
+              <tr>
+                <th>Niveau</th>
+                <th>Min</th>
+                <th>Max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {THRESH_META.map(({ key, label, color }) => (
+                <tr key={key}>
+                  <td>
+                    <span className="thresh-swatch" style={{ background: color }} />
+                    {label}
+                  </td>
+                  <td>
+                    <input
+                      type="number" step="0.01" min="0" max="1"
+                      className="thresh-input"
+                      value={threshForm[key]?.[0] ?? ''}
+                      onChange={e => setThreshForm(f => ({
+                        ...f, [key]: [parseFloat(e.target.value) || 0, f[key][1]]
+                      }))}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="number" step="0.01" min="0" max="99"
+                      className="thresh-input"
+                      value={threshForm[key]?.[1] ?? ''}
+                      onChange={e => setThreshForm(f => ({
+                        ...f, [key]: [f[key][0], parseFloat(e.target.value) || 0]
+                      }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="thresh-actions">
+            <button className="btn-secondary" onClick={resetThresholds} disabled={threshBusy}>
+              Réinitialiser
+            </button>
+            <button className="mm-btn-save" onClick={saveThresholds} disabled={threshBusy}>
+              <LuCheck size={14} />
+              {threshBusy ? 'Enregistrement…' : 'Sauvegarder les seuils'}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Zone danger */}

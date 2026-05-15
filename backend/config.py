@@ -16,17 +16,20 @@ SOURCE_CRS = "EPSG:32629"
 # CRS pour affichage web (Leaflet utilise WGS84)
 WEB_CRS = "EPSG:4326"
 
-# Seuils CWSI — 4 classes. Bornes extrêmes larges pour absorber
-# les valeurs aberrantes (CWSI négatif = surplus hydrique, CWSI > 1 = erreur capteur).
+# Seuils CWSI — 5 classes.
+# La borne supérieure de "severe" est volontairement large (99) pour absorber
+# les valeurs légèrement > 1 dues aux arrondis de calcul.
 CWSI_THRESHOLDS = {
-    "faible": (-99.0, 0.25),  # < 0.25 (inclut valeurs négatives)
-    "modere": ( 0.25, 0.50),
-    "eleve":  ( 0.50, 0.75),
-    "severe": ( 0.75, 99.0),  # ≥ 0.75 (inclut valeurs > 1)
+    "aucun":  (0.0,   0.20),
+    "faible": (0.20,  0.35),
+    "modere": (0.35,  0.50),
+    "eleve":  (0.50,  0.75),
+    "severe": (0.75, 99.0),
 }
 
 # Couleurs par niveau de stress (utilisées côté frontend aussi)
 STRESS_COLORS = {
+    "aucun":  "#2ecc71",   # vert
     "faible": "#f1c40f",   # jaune
     "modere": "#e67e22",   # orange
     "eleve":  "#e74c3c",   # rouge

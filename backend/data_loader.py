@@ -7,20 +7,25 @@ from functools import lru_cache
 import geopandas as gpd
 
 from config import WEB_CRS, CWSI_THRESHOLDS
-from missions_manager import _mission_dir
+from missions_manager import _mission_dir, get_mission
 
 
-def classify_stress(cwsi) -> str:
-    """Classe un CWSI en niveau de stress. Robuste à None, NaN (float ou numpy)."""
+_NODATA = -9999.0   # sentinelle partagée avec geoprocessing.py
+
+
+def classify_stress(cwsi, thresholds=None) -> str:
+    """Classe un CWSI en niveau de stress. Robuste à None, NaN et sentinelle -9999.
+    Si thresholds est fourni (dict label→(low,high)), il remplace les seuils par défaut."""
     if cwsi is None:
         return "inconnu"
     try:
         f = float(cwsi)
     except (TypeError, ValueError):
         return "inconnu"
-    if f != f:  # NaN via IEEE 754 — fonctionne pour float ET numpy.float64
+    if f != f or f <= _NODATA:  # NaN ou sentinelle nodata
         return "inconnu"
-    for label, (low, high) in CWSI_THRESHOLDS.items():
+    active = thresholds if thresholds is not None else CWSI_THRESHOLDS
+    for label, (low, high) in active.items():
         if low <= f < high:
             return label
     return "inconnu"
@@ -74,7 +79,25 @@ def _load_raw_trees(mission_id: str) -> gpd.GeoDataFrame:
 
 def load_trees(mission_id: str) -> gpd.GeoDataFrame:
     """Retourne le GeoDataFrame avec la classification stress toujours à jour.
-    Le chargement fichier est mis en cache ; la classification utilise les seuils courants."""
+    Le chargement fichier est mis en cache ; la classification utilise les seuils courants.
+    Si la mission possède des seuils personnalisés (cwsi_thresholds), ils sont appliqués."""
     gdf = _load_raw_trees(mission_id).copy()
-    gdf["stress"] = gdf["cwsi"].apply(classify_stress)
+    for col in ("temp_moy", "temp_min", "temp_max", "cwsi"):
+        if col in gdf.columns:
+            gdf[col] = gdf[col].where(gdf[col] > _NODATA, other=None)
+
+    # Seuils personnalisés par mission (list→tuple pour chaque classe)
+    custom_thresholds = None
+    meta = get_mission(mission_id)
+    if meta and "cwsi_thresholds" in meta:
+        try:
+            custom_thresholds = {
+                k: tuple(v) for k, v in meta["cwsi_thresholds"].items()
+            }
+        except Exception:
+            custom_thresholds = None
+
+    gdf["stress"] = gdf["cwsi"].apply(
+        lambda v: classify_stress(v, custom_thresholds)
+    )
     return gdf

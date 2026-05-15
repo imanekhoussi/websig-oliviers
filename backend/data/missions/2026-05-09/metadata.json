@@ -1,0 +1,30 @@
+{
+  "date": "2026-05-09",
+  "nom": "Mission 2026-05-09",
+  "notes": "",
+  "meteo": {
+    "temp_air": 20,
+    "humidite": null,
+    "vent": null
+  },
+  "has_thermal_zip": true,
+  "has_thermal_tif": true,
+  "created_at": "2026-05-09T21:45:31",
+  "cwsi_results": {
+    "method": "bian_2019",
+    "t_wet": 26.3479,
+    "t_dry": 41.7596,
+    "n_trees": 968,
+    "n_updated": 968,
+    "computed_at": "2026-05-10T16:30:19+00:00"
+  },
+  "ortho_formats": {
+    "rgb": "zip"
+  },
+  "ortho_status": {
+    "rgb": {
+      "has_tif": false,
+      "has_zip": true
+    }
+  }
+}

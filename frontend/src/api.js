@@ -105,9 +105,9 @@ export async function uploadOrtho(missionId, orthoType, file) {
   return r.json()
 }
 
-export async function deleteOrtho(missionId, orthoType) {
+export async function deleteOrtho(missionId, orthoType, fmt) {
   const r = await fetch(
-    `${API}/api/missions/${missionId}/ortho/${orthoType}`,
+    `${API}/api/missions/${missionId}/ortho/${orthoType}/${fmt}`,
     { method: 'DELETE' },
   )
   const d = await r.json()
@@ -119,4 +119,32 @@ export async function fetchTreeHistory(treeId) {
   const r = await fetch(`${API}/api/trees/${treeId}/history`)
   if (!r.ok) throw new Error('Erreur chargement historique')
   return r.json()
+}
+
+// ===== CWSI =====
+export async function fetchAiAdvice(missionId, params) {
+  const r = await fetch(`${API}/api/missions/${missionId}/ai-advice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  const d = await r.json()
+  if (!r.ok) throw new Error(d.detail || 'Erreur lors de la génération du conseil IA')
+  return d
+}
+
+export async function computeCwsi(missionId, method = 'empirical') {
+  const r = await fetch(`${API}/api/missions/${missionId}/compute-cwsi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, force_recalc: true }),
+  })
+  const d = await r.json()
+  if (!r.ok) {
+    const detail = Array.isArray(d.detail)
+      ? d.detail.map(e => e.msg || JSON.stringify(e)).join(' · ')
+      : d.detail || 'Erreur calcul CWSI'
+    throw new Error(detail)
+  }
+  return d
 }

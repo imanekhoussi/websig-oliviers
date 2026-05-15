@@ -101,6 +101,8 @@ def create_mission(date: str, nom: str = "", notes: str = "",
             "humidite": humidite,
             "vent": vent,
         },
+        "has_thermal_zip": False,
+        "has_thermal_tif": False,
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     with open(d / "metadata.json", "w", encoding="utf-8") as f:
@@ -143,39 +145,83 @@ def delete_mission(mission_id: str) -> bool:
             print(f"[delete_mission] ⚠️ Impossible de supprimer uploads ({uploads_dir}) : {e}")
 
     # ── 3. Vide le cache RAM ─────────────────────────────────────────────────
-    from data_loader import load_trees
-    load_trees.cache_clear()
+    from data_loader import _load_raw_trees
+    _load_raw_trees.cache_clear()
     print(f"[delete_mission] ✓ Cache vidé pour '{mission_id}'.")
     return True
 
 
-def delete_ortho(mission_id: str, ortho_type: str) -> bool:
-    """Supprime les fichiers d'une orthomosaïque et efface son format dans metadata."""
+def update_ortho_status(
+    mission_id: str, ortho_type: str, fmt: str, value: bool
+) -> None:
+    """Met à jour ortho_status.{ortho_type}.has_{fmt} dans metadata.json.
+
+    fmt doit être "tif" ou "zip".
+    Maintient aussi ortho_formats pour la rétrocompatibilité (URL tuiles).
+    """
+    d = _mission_dir(mission_id)
+    meta_file = d / "metadata.json"
+    if not meta_file.exists():
+        return
+    try:
+        with open(meta_file, encoding="utf-8") as f:
+            meta = json.load(f)
+    except json.JSONDecodeError:
+        return
+
+    # ── ortho_status ────────────────────────────────────────────────────────
+    status     = meta.get("ortho_status", {})
+    type_state = status.get(ortho_type, {"has_tif": False, "has_zip": False})
+    type_state[f"has_{fmt}"] = value
+    status[ortho_type]       = type_state
+    meta["ortho_status"]     = status
+
+    # ── ortho_formats (rétrocompat) ──────────────────────────────────────────
+    # ZIP prioritaire pour l'affichage (tuiles = plus rapide) ; TIF sinon
+    fmts = meta.get("ortho_formats", {})
+    if type_state.get("has_zip"):
+        fmts[ortho_type] = "zip"
+    elif type_state.get("has_tif"):
+        fmts[ortho_type] = "tif"
+    else:
+        fmts.pop(ortho_type, None)
+    meta["ortho_formats"] = fmts
+
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def delete_ortho(mission_id: str, ortho_type: str, fmt: str) -> bool:
+    """Supprime les fichiers d'un format d'orthomosaïque (tif ou zip) et met à jour metadata."""
     meta = get_mission(mission_id)
     if meta is None:
         return False
 
-    fmt = meta.get("ortho_formats", {}).get(ortho_type)
+    d = _mission_dir(mission_id)
 
     if fmt == "tif":
-        tif_path = BASE_DIR.parent / "uploads" / mission_id / f"{ortho_type}.tif"
+        tif_path = BASE_DIR / "uploads" / mission_id / f"{ortho_type}.tif"
         if tif_path.exists():
             tif_path.unlink()
 
     elif fmt == "zip":
-        tiles_dir = _mission_dir(mission_id) / f"{ortho_type}_tiles"
-        if tiles_dir.exists():
-            shutil.rmtree(tiles_dir)
+        if ortho_type == "thermal":
+            # Nouveau chemin : data/missions/{id}/thermal/
+            # Fallback legacy : data/missions/{id}/thermal_tiles/
+            for tiles_dir in (d / "thermal", d / "thermal_tiles"):
+                if tiles_dir.exists():
+                    shutil.rmtree(tiles_dir)
+                    break
+        else:
+            tiles_dir = d / f"{ortho_type}_tiles"
+            if tiles_dir.exists():
+                shutil.rmtree(tiles_dir)
 
-    # Remet le format à null dans metadata.json
-    ortho_formats = meta.get("ortho_formats", {})
-    ortho_formats.pop(ortho_type, None)
-    meta["ortho_formats"] = ortho_formats
-    to_save = {k: v for k, v in meta.items() if k not in ("id", "has_shapefile")}
-    d = _mission_dir(mission_id)
-    with open(d / "metadata.json", "w", encoding="utf-8") as f:
-        json.dump(to_save, f, ensure_ascii=False, indent=2)
-
+    # Mise à jour metadata : drapeaux plats pour thermal, ortho_status pour RGB
+    if ortho_type == "thermal":
+        set_thermal_flag(mission_id, f"has_thermal_{fmt}", False)
+    else:
+        update_ortho_status(mission_id, ortho_type, fmt, False)
     return True
 
 
@@ -197,6 +243,63 @@ def set_ortho_format(mission_id: str, ortho_type: str, fmt: str) -> None:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
+def set_thermal_flag(mission_id: str, key: str, value: bool) -> None:
+    """Met à jour has_thermal_zip ou has_thermal_tif dans metadata.json.
+
+    Les deux drapeaux sont indépendants : mettre has_thermal_tif=True ne
+    touche pas à has_thermal_zip, et vice-versa.
+    """
+    if key not in ("has_thermal_zip", "has_thermal_tif"):
+        raise ValueError(f"Clé invalide : {key!r}")
+    d = _mission_dir(mission_id)
+    meta_file = d / "metadata.json"
+    if not meta_file.exists():
+        return
+    try:
+        with open(meta_file, encoding="utf-8") as f:
+            meta = json.load(f)
+    except json.JSONDecodeError:
+        return
+    meta[key] = value
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"[missions_manager] ✓ {key}={value} pour '{mission_id}'.")
+
+
+def save_cwsi_calibration(mission_id: str, calibration: dict) -> None:
+    """Persiste les paramètres de calibration CWSI dans metadata.json (clé cwsi_calibration)."""
+    d = _mission_dir(mission_id)
+    meta_file = d / "metadata.json"
+    if not meta_file.exists():
+        return
+    try:
+        with open(meta_file, encoding="utf-8") as f:
+            meta = json.load(f)
+    except json.JSONDecodeError:
+        return
+    meta["cwsi_calibration"] = calibration
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"[missions_manager] ✓ cwsi_calibration enregistrée pour '{mission_id}'.")
+
+
+def save_cwsi_results(mission_id: str, results: dict) -> None:
+    """Persiste les résultats du calcul CWSI dans metadata.json (clé cwsi_results)."""
+    d = _mission_dir(mission_id)
+    meta_file = d / "metadata.json"
+    if not meta_file.exists():
+        return
+    try:
+        with open(meta_file, encoding="utf-8") as f:
+            meta = json.load(f)
+    except json.JSONDecodeError:
+        return
+    meta["cwsi_results"] = results
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"[missions_manager] ✓ cwsi_results enregistrés pour '{mission_id}'.")
+
+
 def update_mission_metadata(mission_id: str, updates: dict) -> Optional[dict]:
     """Met à jour les métadonnées d'une mission."""
     meta = get_mission(mission_id)
@@ -209,6 +312,11 @@ def update_mission_metadata(mission_id: str, updates: dict) -> Optional[dict]:
             meta[key] = updates[key]
     if "meteo" in updates and isinstance(updates["meteo"], dict):
         meta["meteo"] = {**meta.get("meteo", {}), **updates["meteo"]}
+    if "cwsi_thresholds" in updates:
+        if updates["cwsi_thresholds"] is None:
+            meta.pop("cwsi_thresholds", None)
+        elif isinstance(updates["cwsi_thresholds"], dict):
+            meta["cwsi_thresholds"] = updates["cwsi_thresholds"]
 
     # Retire les champs calculés avant sauvegarde
     to_save = {k: v for k, v in meta.items() if k not in ("id", "has_shapefile")}
@@ -240,8 +348,8 @@ def upload_shapefile(mission_id: str, files: list) -> dict:
         with open(target, "wb") as f:
             shutil.copyfileobj(gpkg_file.file, f)
 
-        from data_loader import load_trees
-        load_trees.cache_clear()
+        from data_loader import _load_raw_trees
+        _load_raw_trees.cache_clear()
 
         # Met à jour metadata.json
         meta = get_mission(mission_id)
@@ -289,8 +397,8 @@ def upload_shapefile(mission_id: str, files: list) -> dict:
                 "Conseil : compressez-les en un seul .zip ou utilisez un fichier .gpkg (GeoPackage)."
             )
 
-    from data_loader import load_trees
-    load_trees.cache_clear()
+    from data_loader import _load_raw_trees, load_trees
+    _load_raw_trees.cache_clear()
 
     # ── Validation spatiale : s'assure que geopandas peut réellement lire le fichier
     try:
@@ -300,7 +408,7 @@ def upload_shapefile(mission_id: str, files: list) -> dict:
         print(f"[upload] ❌ Validation spatiale échouée pour '{mission_id}': {exc}")
         for bad in d.glob("trees.*"):
             bad.unlink(missing_ok=True)
-        load_trees.cache_clear()
+        _load_raw_trees.cache_clear()
         raise ValueError(str(exc))
 
     return get_mission(mission_id)

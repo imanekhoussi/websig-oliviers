@@ -18,7 +18,7 @@ import {
 } from 'react-icons/lu'
 
 
-const STRESS_LEVELS = ['faible', 'modere', 'eleve', 'severe']
+const STRESS_LEVELS = ['aucun', 'faible', 'modere', 'eleve', 'severe']
 
 /** Recalcule les stats serveur-équivalentes sur un sous-ensemble de features */
 function computeZonalStats(features) {
@@ -164,7 +164,7 @@ function Dashboard() {
   // Calcul des indices de vulnérabilité MCDA (AHP) en temps réel
   const mcdaScores = useMemo(() => {
     if (!showMCDA || !geojson?.features?.length) return {}
-    const stressScore = { faible: 25, modere: 50, eleve: 75, severe: 100 }
+    const stressScore = { aucun: 0, faible: 25, modere: 50, eleve: 75, severe: 100 }
     const heights = geojson.features.map(f => f.properties.hauteur).filter(h => h != null)
     const maxH = heights.length ? Math.max(...heights) : 1
     const scores = {}
@@ -177,7 +177,7 @@ function Dashboard() {
     return scores
   }, [showMCDA, geojson, weightStress, weightHeight])
 
-  const KNOWN_STRESS = new Set(['faible', 'modere', 'eleve', 'severe'])
+  const KNOWN_STRESS = new Set(['aucun', 'faible', 'modere', 'eleve', 'severe'])
   const visibleCount = geojson?.features.filter(f => {
     const s = f.properties.stress
     if (!s || !KNOWN_STRESS.has(s)) return true   // inconnu → toujours compté visible

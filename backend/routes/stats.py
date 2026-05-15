@@ -15,7 +15,7 @@ _EMPTY_STATS = {
     "total_arbres": 0,
     "stress_breakdown": [
         {"classe": l, "count": 0, "color": STRESS_COLORS.get(l, "#95a5a6")}
-        for l in ["faible", "modere", "eleve", "severe"]
+        for l in ["aucun", "faible", "modere", "eleve", "severe"]
     ],
     "cwsi":        {"moyenne": None, "min": None, "max": None},
     "temperature": {"moyenne": None, "min": None, "max": None},
@@ -42,7 +42,7 @@ def get_stats(mission_id: str):
             "count": stress_counts.get(label, 0),
             "color": STRESS_COLORS.get(label, "#95a5a6"),
         }
-        for label in ["faible", "modere", "eleve", "severe"]
+        for label in ["aucun", "faible", "modere", "eleve", "severe"]
     ]
 
     def stats_of(series):

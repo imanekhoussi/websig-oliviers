@@ -8,18 +8,59 @@ import zipfile
 from collections import Counter
 from datetime import date as _date
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Body, Query
 from fastapi.responses import Response
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import pandas as pd
 from fpdf import FPDF
 
 import missions_manager as mm
+import geoprocessing
 from data_loader import load_trees
 from config import STRESS_COLORS
 
 router = APIRouter(prefix="/api/missions", tags=["missions"])
+
+
+class CWSIPayload(BaseModel):
+    method: str = "empirical"
+    force_recalc: bool = True  # True par défaut : le bouton UI recalcule toujours
+
+    @field_validator("method")
+    @classmethod
+    def _check_method(cls, v: str) -> str:
+        if v not in geoprocessing.SUPPORTED_METHODS:
+            raise ValueError(
+                f"Méthode '{v}' inconnue. "
+                f"Valeurs acceptées : {', '.join(geoprocessing.SUPPORTED_METHODS)}"
+            )
+        return v
+
+
+def _bg_compute_cwsi(mission_id: str) -> None:
+    """Tâche de fond déclenchée après upload.
+
+    Essaie 'empirical' si temp_air est renseigné, sinon replie sur 'bian_2019'.
+    Les erreurs sont loguées sans faire crasher le serveur.
+    """
+    meta     = mm.get_mission(mission_id)
+    temp_air = (meta or {}).get("meteo", {}).get("temp_air")
+    method   = "empirical" if temp_air is not None else "bian_2019"
+
+    try:
+        result = geoprocessing.compute_mission_cwsi(
+            mission_id, method=method, force_recalc=False
+        )
+        print(
+            f"[bg_compute] '{mission_id}' [{method}] → {result['status']} "
+            f"({result.get('n_updated', 0)}/{result.get('n_trees', 0)} arbres mis à jour)"
+        )
+    except FileNotFoundError:
+        # Fichier encore absent (race condition théorique) — on ignore silencieusement
+        pass
+    except Exception as exc:
+        print(f"[bg_compute] ❌ '{mission_id}' [{method}] — {exc}")
 
 
 class MissionCreate(BaseModel):
@@ -35,6 +76,7 @@ class MissionUpdate(BaseModel):
     nom: Optional[str] = None
     notes: Optional[str] = None
     meteo: Optional[dict] = None
+    cwsi_thresholds: Optional[dict] = None
 
 
 @router.get("")
@@ -60,7 +102,7 @@ def get_one(mission_id: str):
 
 @router.patch("/{mission_id}")
 def update(mission_id: str, payload: MissionUpdate):
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None or k == "cwsi_thresholds"}
     m = mm.update_mission_metadata(mission_id, updates)
     if m is None:
         raise HTTPException(404, f"Mission '{mission_id}' introuvable")
@@ -83,15 +125,24 @@ def delete(mission_id: str):
 
 
 @router.post("/{mission_id}/upload")
-async def upload(mission_id: str, files: List[UploadFile] = File(...)):
+async def upload(
+    mission_id: str,
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+):
     try:
-        return mm.upload_shapefile(mission_id, files)
+        result = mm.upload_shapefile(mission_id, files)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Erreur upload : {e}")
+
+    # Lance le calcul CWSI automatiquement (lit temp_moy depuis le fichier vecteur)
+    background_tasks.add_task(_bg_compute_cwsi, mission_id)
+
+    return result
 
 
 @router.post("/{mission_id}/upload-ortho")
@@ -106,87 +157,113 @@ async def upload_ortho(
 
     fname = (file.filename or "").lower()
 
-    # ── CAS 1 : ZIP de tuiles XYZ pré-générées ───────────────────────────────
-    if fname.endswith(".zip"):
-        tiles_dir = Path("data/missions") / mission_id / f"{ortho_type}_tiles"
-        tiles_dir.mkdir(parents=True, exist_ok=True)
-        tmp_zip = tiles_dir.parent / f"_tmp_{ortho_type}.zip"
-        print(f"[upload_ortho] ZIP reçu → sauvegarde temporaire : {tmp_zip}")
-        try:
-            with open(tmp_zip, "wb") as f_out:
-                shutil.copyfileobj(file.file, f_out)
-            print(f"[upload_ortho] Extraction vers {tiles_dir} …")
-            with zipfile.ZipFile(tmp_zip, "r") as z:
-                z.extractall(tiles_dir)
-
-            # Aplatissement : si le ZIP contenait un dossier racine intermédiaire,
-            # on remonte son contenu d'un niveau pour que l'URL {z}/{x}/{y}.png fonctionne.
-            children = list(tiles_dir.iterdir())
-            if len(children) == 1 and children[0].is_dir():
-                intermediate = children[0]
-                for item in list(intermediate.iterdir()):
-                    shutil.move(str(item), str(tiles_dir / item.name))
-                os.rmdir(intermediate)
-
-            print(f"[upload_ortho] ✓ {ortho_type} extrait dans {tiles_dir}")
-        except Exception as e:
-            print(f"[upload_ortho] ❌ Erreur ZIP ({ortho_type}) : {e}")
-            # Nettoie le dossier partiellement extrait pour ne pas laisser un état corrompu
-            if tiles_dir.exists():
-                shutil.rmtree(tiles_dir, ignore_errors=True)
-            raise HTTPException(500, f"Erreur extraction ZIP : {e}")
-        finally:
-            tmp_zip.unlink(missing_ok=True)
-
-        mm.set_ortho_format(mission_id, ortho_type, "zip")
-        return {
-            "status": "ok",
-            "ortho_type": ortho_type,
-            "format": "zip",
-            "url": f"/tiles/{mission_id}/{ortho_type}_tiles/{{z}}/{{x}}/{{y}}.png",
-        }
-
-    # ── CAS 2 : GeoTIFF brut ─────────────────────────────────────────────────
-    elif fname.endswith((".tif", ".tiff")):
-        upload_dir = Path("uploads") / mission_id
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        dest = upload_dir / f"{ortho_type}.tif"
-        print(f"[upload_ortho] TIF reçu → sauvegarde : {dest}")
-        try:
-            with open(dest, "wb") as f_out:
-                shutil.copyfileobj(file.file, f_out)
-            print(f"[upload_ortho] ✓ TIF sauvegardé ({dest.stat().st_size / 1_048_576:.1f} MB)")
-        except Exception as e:
-            print(f"[upload_ortho] ❌ Erreur sauvegarde TIF : {e}")
-            raise HTTPException(500, f"Erreur sauvegarde GeoTIFF : {e}")
-
-        mm.set_ortho_format(mission_id, ortho_type, "tif")
-        return {
-            "status": "ok",
-            "ortho_type": ortho_type,
-            "format": "tif",
-            "url": f"/uploads/{mission_id}/{ortho_type}.tif",
-        }
-
-    # ── Format non reconnu ────────────────────────────────────────────────────
-    else:
+    if not fname.endswith(".zip"):
         raise HTTPException(
             400,
-            "Format non supporté. Utilisez .zip (tuiles XYZ pré-générées) ou .tif/.tiff (GeoTIFF brut).",
+            "Seuls les fichiers .zip (tuiles XYZ pré-générées) sont acceptés. "
+            "Le format GeoTIFF n'est plus supporté.",
         )
 
+    # Thermal → data/missions/{id}/thermal/  (Leaflet : /tiles/{id}/thermal/{z}/{x}/{y}.png)
+    # RGB     → data/missions/{id}/rgb_tiles/
+    if ortho_type == "thermal":
+        tiles_dir = Path("data/missions") / mission_id / "thermal"
+    else:
+        tiles_dir = Path("data/missions") / mission_id / f"{ortho_type}_tiles"
 
-@router.delete("/{mission_id}/ortho/{ortho_type}")
+    tiles_dir.mkdir(parents=True, exist_ok=True)
+    tmp_zip = tiles_dir.parent / f"_tmp_{ortho_type}.zip"
+    print(f"[upload_ortho] ZIP reçu → sauvegarde temporaire : {tmp_zip}")
+    try:
+        with open(tmp_zip, "wb") as f_out:
+            shutil.copyfileobj(file.file, f_out)
+        print(f"[upload_ortho] Extraction vers {tiles_dir} …")
+        with zipfile.ZipFile(tmp_zip, "r") as z:
+            z.extractall(tiles_dir)
+
+        # Aplatissement : si le ZIP contenait un dossier racine intermédiaire,
+        # remonte son contenu d'un niveau pour que {z}/{x}/{y}.png fonctionne.
+        children = list(tiles_dir.iterdir())
+        if len(children) == 1 and children[0].is_dir():
+            intermediate = children[0]
+            for item in list(intermediate.iterdir()):
+                shutil.move(str(item), str(tiles_dir / item.name))
+            os.rmdir(intermediate)
+
+        print(f"[upload_ortho] ✓ {ortho_type} extrait dans {tiles_dir}")
+    except Exception as e:
+        print(f"[upload_ortho] ❌ Erreur ZIP ({ortho_type}) : {e}")
+        if tiles_dir.exists():
+            shutil.rmtree(tiles_dir, ignore_errors=True)
+        raise HTTPException(500, f"Erreur extraction ZIP : {e}")
+    finally:
+        tmp_zip.unlink(missing_ok=True)
+
+    if ortho_type == "thermal":
+        mm.set_thermal_flag(mission_id, "has_thermal_zip", True)
+        tile_url = f"/tiles/{mission_id}/thermal/{{z}}/{{x}}/{{y}}.png"
+    else:
+        mm.set_ortho_format(mission_id, ortho_type, "zip")
+        mm.update_ortho_status(mission_id, ortho_type, "zip", True)
+        tile_url = f"/tiles/{mission_id}/{ortho_type}_tiles/{{z}}/{{x}}/{{y}}.png"
+
+    return {
+        "status": "ok",
+        "ortho_type": ortho_type,
+        "format": "zip",
+        "url": tile_url,
+    }
+
+
+@router.post("/{mission_id}/compute-cwsi")
+def compute_cwsi(mission_id: str, payload: CWSIPayload):
+    """
+    Lance (ou relance) le pipeline de calcul CWSI de façon synchrone.
+
+    Body JSON :
+      - method        : "empirical" | "bian_2019"  (défaut : "empirical")
+      - force_recalc  : true | false               (défaut : true)
+
+    Pré-requis :
+      - POST /upload             → trees.gpkg / trees.shp avec colonne temp_moy
+      - PATCH /api/missions/{id} → temp_air renseigné (si method=empirical)
+
+    Retourne T_wet, T_dry et les compteurs d'arbres mis à jour.
+    """
+    m = mm.get_mission(mission_id)
+    if m is None:
+        raise HTTPException(404, f"Mission '{mission_id}' introuvable")
+
+    try:
+        result = geoprocessing.compute_mission_cwsi(
+            mission_id,
+            method=payload.method,
+            force_recalc=payload.force_recalc,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Erreur calcul CWSI : {e}")
+
+    return result
+
+
+@router.delete("/{mission_id}/ortho/{ortho_type}/{fmt}")
 def delete_ortho(
     mission_id: str,
     ortho_type: str,
+    fmt: str,
 ):
     if ortho_type not in ("rgb", "thermal"):
         raise HTTPException(400, "ortho_type doit être 'rgb' ou 'thermal'")
-    ok = mm.delete_ortho(mission_id, ortho_type)
+    if fmt not in ("tif", "zip"):
+        raise HTTPException(400, "fmt doit être 'tif' ou 'zip'")
+    ok = mm.delete_ortho(mission_id, ortho_type, fmt)
     if not ok:
         raise HTTPException(404, f"Mission '{mission_id}' introuvable")
-    return {"status": "ok", "deleted": ortho_type}
+    return {"status": "ok", "deleted": ortho_type, "fmt": fmt}
 
 
 @router.get("/{mission_id}/export")
@@ -439,18 +516,20 @@ def _build_pdf(mission_id: str, meta: dict, gdf) -> bytes:
     y += 8
 
     labels_fr = {
+        'aucun':  'Aucun stress',
         'faible': 'Stress faible',
         'modere': 'Stress modere',
         'eleve':  'Stress eleve',
         'severe': 'Stress severe',
     }
     thresholds = {
-        'faible': '< 0.25',
-        'modere': '0.25 - 0.50',
+        'aucun':  '< 0.20',
+        'faible': '0.20 - 0.35',
+        'modere': '0.35 - 0.50',
         'eleve':  '0.50 - 0.75',
         'severe': '>= 0.75',
     }
-    for j, classe in enumerate(['faible', 'modere', 'eleve', 'severe']):
+    for j, classe in enumerate(['aucun', 'faible', 'modere', 'eleve', 'severe']):
         cnt   = s_counts.get(classe, 0)
         pct   = f'{round(100 * cnt / total, 1)} %' if total > 0 else '0 %'
         color = STRESS_COLORS.get(classe, '#95a5a6')

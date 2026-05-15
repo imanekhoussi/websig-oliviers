@@ -17,7 +17,8 @@
       "PowerShell($content = Get-Content \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\node_modules\\\\react-icons\\\\lu\\\\index.mjs\" -Raw; [regex]::Matches\\($content, 'export \\\\{ \\(Lu[A-Za-z0-9]+\\)'\\) | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match 'Chart|Activity|Trend|Graph|Stats|Analyt|Line|Area' } | Sort-Object)",
       "PowerShell($content = Get-Content \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\node_modules\\\\react-icons\\\\lu\\\\index.mjs\" -Raw -Encoding UTF8; $matches2 = [regex]::Matches\\($content, 'var \\(Lu[A-Za-z0-9]+\\)'\\); $icons = $matches2 | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique; $icons | Where-Object { $_ -match 'Chart|Activity|Trend|Graph|Stats|Line|Area|Pie' })",
       "PowerShell(Get-Content *)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(venv\\\\Scripts\\\\python -m pip install rasterio rasterstats numpy --quiet)"
     ]
   }
 }
