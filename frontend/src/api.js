@@ -133,6 +133,37 @@ export async function fetchAiAdvice(missionId, params) {
   return d
 }
 
+export async function fetchAnomalies(missionId) {
+  const r = await fetch(`${API}/api/missions/${missionId}/anomalies`)
+  const d = await r.json()
+  if (!r.ok) throw new Error(d.detail || 'Erreur détection anomalies')
+  return d
+}
+
+export async function fetchYieldPredictions(missionId) {
+  const r = await fetch(`${API}/api/missions/${missionId}/predict-yield`, {
+    method: 'POST',
+  })
+  const d = await r.json()
+  if (!r.ok) throw new Error(
+    Array.isArray(d.detail)
+      ? d.detail.map(e => e.msg || JSON.stringify(e)).join(' · ')
+      : d.detail || 'Erreur prédiction rendement'
+  )
+  return d
+}
+
+export async function fetchChat(messages, contextData = null) {
+  const r = await fetch(`${API}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, context_data: contextData }),
+  })
+  const d = await r.json()
+  if (!r.ok) throw new Error(d.detail || "Erreur lors de l'appel au chat IA")
+  return d
+}
+
 export async function computeCwsi(missionId, method = 'empirical') {
   const r = await fetch(`${API}/api/missions/${missionId}/compute-cwsi`, {
     method: 'POST',

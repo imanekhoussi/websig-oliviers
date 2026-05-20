@@ -228,27 +228,39 @@ export default function AnalyticsModal({
             {/* ── Distribution CWSI ── */}
             <div className="am-card">
               <h4 className="am-card-title">Distribution CWSI</h4>
-              <div className="am-chart-wrap">
+              <div className="am-chart-wrap" style={{ height: 340 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={stats.histogram_cwsi}
-                    margin={{ top: 20, right: 20, left: 0, bottom: 40 }}
+                    margin={{ top: 20, right: 20, left: 20, bottom: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
                     <XAxis
                       dataKey="bin" fontSize={11} angle={-45} textAnchor="end"
                       interval={0} tick={{ fill: '#94a3b8' }} tickLine={false}
                       axisLine={{ stroke: 'rgba(148,163,184,0.15)' }}
+                      height={78}
+                      label={{
+                        value: 'Intervalles du CWSI',
+                        position: 'insideBottom',
+                        offset: 8,
+                        style: { fill: '#94a3b8', fontSize: 10, textAnchor: 'middle' },
+                      }}
                     />
-                    <YAxis fontSize={12} tick={{ fill: '#94a3b8' }} tickLine={false} axisLine={false} width={40} />
+                    <YAxis
+                      fontSize={11} tick={{ fill: '#94a3b8' }} tickLine={false} axisLine={false} width={52}
+                      label={{
+                        value: "Nombre d'oliviers",
+                        angle: -90,
+                        position: 'insideLeft',
+                        dx: -10,
+                        style: { fill: '#94a3b8', fontSize: 10, textAnchor: 'middle' },
+                      }}
+                    />
                     <Tooltip content={<CwsiTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                     <Bar dataKey="count" fill="#38bdf8" fillOpacity={0.82} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
-              </div>
-              <div className="am-range-row">
-                <span>CWSI</span>
-                <span>{stats.cwsi.min ?? '—'} → {stats.cwsi.max ?? '—'}</span>
               </div>
             </div>
 

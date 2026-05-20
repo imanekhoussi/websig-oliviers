@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from routes import missions, trees, stats, ai_advice
+from routes import missions, trees, stats, ai_advice, anomaly, chat
 from routes.trees import history_router
 
 app = FastAPI(
@@ -42,6 +42,8 @@ app.include_router(trees.router)
 app.include_router(history_router)
 app.include_router(stats.router)
 app.include_router(ai_advice.router)
+app.include_router(anomaly.router)
+app.include_router(chat.router)
 
 
 @app.get("/")

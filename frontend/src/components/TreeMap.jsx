@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { MapContainer, TileLayer, LayerGroup, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import { MapContainer, TileLayer, LayerGroup, Marker, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap } from 'react-leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import 'leaflet-draw'
@@ -13,6 +14,7 @@ import { LuThermometer, LuRuler, LuDroplet, LuFootprints } from 'react-icons/lu'
 import MapFilterOverlay from './MapFilterOverlay'
 import WeatherWidget from './WeatherWidget'
 import { useToast } from '../hooks/useToast'
+import Deck3DOverlay from './Deck3DOverlay'
 
 const DEFAULT_CENTER = [35.76, -5.83]
 const DEFAULT_ZOOM   = 7
@@ -180,7 +182,7 @@ function HistoryTooltip({ active, payload, label }) {
 }
 
 /** Data card popup pour un arbre */
-function TreePopup({ p, color, history }) {
+function TreePopup({ p, color, history, yieldKg = null }) {
   const cwsiPct   = Math.min((p.cwsi || 0) * 100, 100)
   const hasHistory = Array.isArray(history) && history.length >= 2
 
@@ -195,6 +197,16 @@ function TreePopup({ p, color, history }) {
             {STRESS_LABELS[p.stress] ?? 'Inconnu'}
           </span>
         </div>
+
+        {/* ── Rendement prédit (mode yield uniquement) ── */}
+        {yieldKg != null && (
+          <div className="yield-popup-row">
+            <span>🫒 Rendement prédit</span>
+            <span style={{ fontWeight: 700, color: yieldToColor(yieldKg) }}>
+              {yieldKg.toFixed(1)} kg
+            </span>
+          </div>
+        )}
 
         {/* ── Grille 3 colonnes ── */}
         <div className="popup-grid">
@@ -301,7 +313,51 @@ function cwsiToStressColor(cwsi) {
   return STRESS_COLORS.severe
 }
 
+/** Traduit un rendement prédit (kg/arbre) en couleur pour le mode 'yield'. */
+function yieldToColor(kg) {
+  if (kg == null) return '#95a5a6'   // gris  — donnée manquante
+  if (kg < 15)    return '#e74c3c'   // rouge — faible
+  if (kg < 25)    return '#f39c12'   // orange — moyen
+  return '#27ae60'                   // vert  — bon rendement
+}
+
 const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6']
+
+/** Labels lisibles pour chaque type de filtre IA */
+const MAP_FILTER_LABELS = {
+  stress_severe:    'Stress sévère uniquement',
+  stress_critique:  'Stress élevé + sévère',
+  stress_eleve:     'Stress élevé uniquement',
+  stress_modere:    'Stress modéré uniquement',
+  stress_faible:    'Stress faible uniquement',
+  stress_aucun:     'Sans stress uniquement',
+  rendement_faible: 'Rendement sous la moyenne',
+}
+
+/**
+ * Retourne true si l'arbre doit être atténué (non conforme au filtre IA actif).
+ * @param {object} p               - feature.properties
+ * @param {object|null} mapFilter  - { action:'filter', type:string } | null
+ * @param {object|null} yieldPred  - dict { id → rendement_kg }
+ * @param {number|null} yieldAvg   - moyenne globale du rendement (pré-calculée)
+ */
+function isFilteredOut(p, mapFilter, yieldPred, yieldAvg) {
+  if (!mapFilter || mapFilter.action !== 'filter') return false
+  switch (mapFilter.type) {
+    case 'stress_severe':    return p.stress !== 'severe'
+    case 'stress_critique':  return !['eleve', 'severe'].includes(p.stress)
+    case 'stress_eleve':     return p.stress !== 'eleve'
+    case 'stress_modere':    return p.stress !== 'modere'
+    case 'stress_faible':    return p.stress !== 'faible'
+    case 'stress_aucun':     return p.stress !== 'aucun'
+    case 'rendement_faible': {
+      const y = yieldPred?.[p.id]
+      if (y == null) return true
+      return yieldAvg != null && y >= yieldAvg
+    }
+    default: return false
+  }
+}
 
 /** Style Leaflet pour les secteurs K-Means */
 function sectorStyleFn(feature) {
@@ -360,8 +416,58 @@ export default function TreeMap({
   onCwsiChange    = () => {},
   onFilterReset   = () => {},
   totalCount    = 0,
+  // ── anomalies ───────────────────────────────────────
+  showAnomalies    = false,
+  anomalyData      = null,
+  anomalyLoading   = false,
+  onToggleAnomalies = () => {},
+  // ── mode rendement IA ────────────────────────────────
+  mapMode          = 'stress',
+  yieldPredictions = null,
+  // ── filtre IA carte ──────────────────────────────────
+  mapFilter        = null,
+  onMapFilterReset = () => {},
 }) {
   const compareId = compareMission?.id ?? null
+
+  // Injecte les keyframes CSS de l'animation pulse une seule fois au montage.
+  useEffect(() => {
+    const id = '__anomaly-pulse-style__'
+    if (!document.getElementById(id)) {
+      const style = document.createElement('style')
+      style.id = id
+      style.textContent = `
+        @keyframes anomaly-pulse-anim {
+          0%   { transform: translate(-50%,-50%) scale(0.4); opacity: 0.9; }
+          100% { transform: translate(-50%,-50%) scale(2.6); opacity: 0; }
+        }
+        .anomaly-pin { position: relative; width: 24px; height: 24px; }
+        .anomaly-pulse-ring {
+          width: 24px; height: 24px; border-radius: 50%;
+          background: rgba(231,76,60,0.45);
+          position: absolute; top: 50%; left: 50%;
+          transform: translate(-50%,-50%);
+          animation: anomaly-pulse-anim 1.6s ease-out infinite;
+          pointer-events: none;
+        }
+        .anomaly-dot {
+          width: 12px; height: 12px; background: #e74c3c;
+          border-radius: 50%; border: 2px solid white;
+          box-shadow: 0 0 6px rgba(231,76,60,0.55);
+          position: absolute; top: 50%; left: 50%;
+          transform: translate(-50%,-50%);
+        }
+      `
+      document.head.appendChild(style)
+    }
+  }, [])
+
+  const anomalyIcon = useMemo(() => L.divIcon({
+    className: '',
+    html: '<div class="anomaly-pin"><div class="anomaly-pulse-ring"></div><div class="anomaly-dot"></div></div>',
+    iconSize:   [24, 24],
+    iconAnchor: [12, 12],
+  }), [])
 
   // Cache de l'historique : { [treeId]: data[] }
   const historyCache = useRef({})
@@ -386,6 +492,21 @@ export default function TreeMap({
   const [hexbinGrid,     setHexbinGrid]     = useState(null)
   // Ensemble des calculs en cours — alimente l'overlay "Calcul spatial en cours…"
   const [pendingCalcs, setPendingCalcs]   = useState(new Set())
+
+  // ── Vue 3D Deck.gl ────────────────────────────────────────────────────────
+  const [show3D,            setShow3D]            = useState(false)
+  const [deck3DInitialState, setDeck3DInitialState] = useState(null)
+
+  function handle3DToggle() {
+    if (show3D) { setShow3D(false); return }
+    const center = mapRef.current?.getCenter()
+    setDeck3DInitialState({
+      longitude: center?.lng ?? DEFAULT_CENTER[1],
+      latitude:  center?.lat ?? DEFAULT_CENTER[0],
+      zoom:      mapRef.current?.getZoom() ?? 15,
+    })
+    setShow3D(true)
+  }
 
   // Initialise le worker une fois au montage ; le termine au démontage.
   useEffect(() => {
@@ -557,6 +678,13 @@ export default function TreeMap({
   )
   const hasSelection = selectedTrees !== null
 
+  // Moyenne du rendement prédit — seuil pour le filtre 'rendement_faible'
+  const yieldAvg = useMemo(() => {
+    if (!yieldPredictions) return null
+    const vals = Object.values(yieldPredictions).filter(v => v != null && !isNaN(v))
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null
+  }, [yieldPredictions])
+
   const KNOWN_CLASSES = new Set(['aucun', 'faible', 'modere', 'eleve', 'severe'])
   const visibleFeatures = (geojson?.features ?? []).filter(f => {
     const s = f.properties.stress
@@ -584,17 +712,21 @@ export default function TreeMap({
       if (!feat.geometry?.coordinates) return null
 
       const p         = feat.properties
-      const color     = showMCDA && mcdaScores[p.id] != null
-        ? vulnerabilityToColor(mcdaScores[p.id])
-        : STRESS_COLORS[p.stress] || STRESS_COLORS.inconnu
+      const yieldKg   = mapMode === 'yield' ? (yieldPredictions?.[p.id] ?? null) : null
+      const color     = mapMode === 'yield'
+        ? yieldToColor(yieldKg)
+        : showMCDA && mcdaScores[p.id] != null
+          ? vulnerabilityToColor(mcdaScores[p.id])
+          : STRESS_COLORS[p.stress] || STRESS_COLORS.inconnu
       const key       = `${pane ?? 'default'}-${p.id != null ? p.id : index}`
       const history   = historyCache.current[p.id]
       const paneProps = pane ? { pane } : { pane: 'markerPane' }
 
-      // Dimming : arbre hors-sélection → quasi-transparent
-      const dimmed = applySelection && hasSelection && !selectedIds.has(p.id)
-      const fillO  = dimmed ? 0.15 : 0.92
-      const strokeO = dimmed ? 0.1 : 1
+      // Dimming : filtre IA actif OU arbre hors-sélection → quasi-transparent
+      const aiDimmed = isFilteredOut(p, mapFilter, yieldPredictions, yieldAvg)
+      const dimmed   = aiDimmed || (applySelection && hasSelection && !selectedIds.has(p.id))
+      const fillO    = dimmed ? 0.10 : 0.92
+      const strokeO  = dimmed ? 0.08 : 1
 
       if (feat.geometry.type === 'Point') {
         return (
@@ -624,7 +756,7 @@ export default function TreeMap({
               },
             }}
           >
-            <TreePopup p={p} color={color} history={history} />
+            <TreePopup p={p} color={color} history={history} yieldKg={yieldKg} />
           </CircleMarker>
         )
       }
@@ -644,7 +776,7 @@ export default function TreeMap({
               click: () => fetchHistory(p.id),
             }}
           >
-            <TreePopup p={p} color={color} history={history} />
+            <TreePopup p={p} color={color} history={history} yieldKg={yieldKg} />
           </Polygon>
         )
       }
@@ -824,7 +956,86 @@ export default function TreeMap({
           </>
         )}
 
+        {/* ── Anomalies : z650, au-dessus de tous les markers (z600) ── */}
+        <Pane name="anomaly-pane" style={{ zIndex: 650 }} />
+        {showAnomalies && anomalyData?.anomalies?.length > 0 && (
+          <LayerGroup pane="anomaly-pane">
+            {anomalyData.anomalies.map(a => (
+              <Marker
+                key={`anomaly-${a.id}`}
+                position={[a.lat, a.lon]}
+                icon={anomalyIcon}
+                pane="anomaly-pane"
+              >
+                <Popup className="tree-popup-wrapper" minWidth={210}>
+                  <div className="custom-popup">
+                    <div className="popup-header">
+                      <span className="popup-title">⚠ Anomalie #{a.id}</span>
+                      <span className="stress-badge" style={{ backgroundColor: '#e74c3c' }}>
+                        {STRESS_LABELS[a.stress] ?? a.stress}
+                      </span>
+                    </div>
+                    <div className="popup-grid">
+                      <div className="popup-cell">
+                        <span className="popup-cell-icon"><LuDroplet size={16} /></span>
+                        <span className="popup-cell-label">CWSI</span>
+                        <span className="popup-cell-value" style={{ color: '#e74c3c' }}>
+                          {a.cwsi.toFixed(3)}
+                        </span>
+                      </div>
+                      <div className="popup-cell">
+                        <span className="popup-cell-icon"><LuThermometer size={16} /></span>
+                        <span className="popup-cell-label">Temp.</span>
+                        <span className="popup-cell-value">
+                          {a.temp_moy.toFixed(1)}<small>°C</small>
+                        </span>
+                      </div>
+                      <div className="popup-cell">
+                        <span className="popup-cell-icon"><LuRuler size={16} /></span>
+                        <span className="popup-cell-label">Hauteur</span>
+                        <span className="popup-cell-value">
+                          {a.hauteur.toFixed(1)}<small>m</small>
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ padding: '6px 0 2px', fontSize: 11, color: 'var(--text-muted)' }}>
+                      Score d'anomalie :&nbsp;
+                      <span style={{ color: '#e74c3c', fontWeight: 700 }}>
+                        {a.anomaly_score.toFixed(4)}
+                      </span>
+                    </div>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+          </LayerGroup>
+        )}
+
       </MapContainer>
+
+      {/* ── Bouton Vue 3D — coin inférieur gauche, au-dessus du bouton anomalie ── */}
+      {geojson?.features?.length > 0 && (
+        <button
+          className={`btn-3d-view${show3D ? ' active' : ''}`}
+          onClick={handle3DToggle}
+        >
+          {show3D ? '✕ Vue 3D' : '🏔 Vue 3D'}
+        </button>
+      )}
+
+      {/* ── Bouton toggle anomalies — coin inférieur gauche ── */}
+      <button
+        className={`anomaly-map-btn${showAnomalies ? ' active' : ''}`}
+        onClick={onToggleAnomalies}
+        disabled={anomalyLoading}
+      >
+        {anomalyLoading
+          ? '⏳ Analyse…'
+          : showAnomalies
+            ? <>🔴 Masquer anomalies{anomalyData && <span className="anomaly-map-badge">{anomalyData.n_anomalies}</span>}</>
+            : '🔍 Afficher les anomalies'
+        }
+      </button>
 
       {/* ── Overlay filtres cross-critères — coin supérieur droit ── */}
       {totalCount > 0 && (
@@ -842,6 +1053,23 @@ export default function TreeMap({
         />
       )}
 
+      {/* ── Badge filtre IA — centré en haut de carte ── */}
+      {mapFilter?.action === 'filter' && (
+        <div className="map-ai-filter-badge">
+          <span className="map-ai-filter-badge__icon">🤖</span>
+          <span className="map-ai-filter-badge__label">
+            Filtre IA · {MAP_FILTER_LABELS[mapFilter.type] ?? mapFilter.type}
+          </span>
+          <button
+            className="map-ai-filter-badge__reset"
+            onClick={onMapFilterReset}
+            title="Réinitialiser le filtre"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* ── Widget météo — coin inférieur droit, au-dessus de l'attribution Leaflet ── */}
       <WeatherWidget geojson={geojson} />
 
@@ -854,6 +1082,15 @@ export default function TreeMap({
             {' '}({[...pendingCalcs].map(t => ({ IDW: 'IDW', KMEANS: 'Secteurs', TSP: 'Tournée', HEXBIN: 'Hexbin' }[t] ?? t)).join(', ')})
           </span>
         </div>
+      )}
+
+      {/* ── Overlay Vue 3D Deck.gl — couvre toute la carte quand actif ── */}
+      {show3D && deck3DInitialState && (
+        <Deck3DOverlay
+          geojson={geojson}
+          initialViewState={deck3DInitialState}
+          onClose={() => setShow3D(false)}
+        />
       )}
 
       {/* ── Overlay split-screen — positions initiales à 50 %, mises à jour par DOM direct ── */}

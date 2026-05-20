@@ -12,6 +12,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File,
 from fastapi.responses import Response
 from typing import List, Optional
 from pydantic import BaseModel, field_validator
+import numpy as np
+import joblib
 import pandas as pd
 from fpdf import FPDF
 
@@ -21,6 +23,9 @@ from data_loader import load_trees
 from config import STRESS_COLORS
 
 router = APIRouter(prefix="/api/missions", tags=["missions"])
+
+_MODEL_PATH    = Path("modele_rendement_olivier.joblib")
+_YIELD_FEATURES = ["hauteur_m", "cwsi_ete", "temp_moy_c"]   # ordre attendu par le modèle
 
 
 class CWSIPayload(BaseModel):
@@ -248,6 +253,85 @@ def compute_cwsi(mission_id: str, payload: CWSIPayload):
         raise HTTPException(500, f"Erreur calcul CWSI : {e}")
 
     return result
+
+
+@router.post("/{mission_id}/predict-yield")
+def predict_yield(mission_id: str):
+    """
+    Prédit le rendement (kg/arbre) via un modèle Scikit-Learn pré-entraîné.
+
+    Fichier attendu dans backend/ : modele_rendement_olivier.joblib
+    Features : hauteur (m), cwsi, temp_moy (°C)
+    """
+    # ── Vérification du modèle ───────────────────────────────────────────────
+    if not _MODEL_PATH.exists():
+        raise HTTPException(
+            503,
+            f"Modèle introuvable : '{_MODEL_PATH}'. "
+            "Placez le fichier 'modele_rendement_olivier.joblib' dans le dossier backend/.",
+        )
+    try:
+        model = joblib.load(_MODEL_PATH)
+    except Exception as exc:
+        raise HTTPException(503, f"Impossible de charger le modèle : {exc}")
+
+    # ── Vérification de la mission ───────────────────────────────────────────
+    if mm.get_mission(mission_id) is None:
+        raise HTTPException(404, f"Mission '{mission_id}' introuvable.")
+
+    # ── Chargement des arbres ────────────────────────────────────────────────
+    try:
+        gdf = load_trees(mission_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+    # ── Préparation des features ─────────────────────────────────────────────
+    # On conserve les noms de colonnes source ('hauteur', 'cwsi', 'temp_moy')
+    # tout au long du nettoyage, puis on renomme explicitement au dernier
+    # moment pour construire la matrice X dans l'ordre attendu par le modèle.
+    _SRC = ["hauteur", "cwsi", "temp_moy"]
+    _RENAME = {"hauteur": "hauteur_m", "cwsi": "cwsi_ete", "temp_moy": "temp_moy_c"}
+
+    df = gdf[["id", "geometry"] + _SRC].copy()
+    df = df.dropna(subset=_SRC)
+
+    if df.empty:
+        raise HTTPException(
+            422,
+            "Aucun arbre ne possède les trois colonnes requises "
+            "(hauteur, cwsi, temp_moy) avec des valeurs non nulles.",
+        )
+
+    X: np.ndarray = (
+        df[_SRC]
+        .rename(columns=_RENAME)
+        .astype(float)
+        .values
+    )
+    predictions = model.predict(X)
+
+    # ── Construction de la réponse ───────────────────────────────────────────
+    results = []
+    for i, (_, row) in enumerate(df.iterrows()):
+        geom = row.geometry
+        ref  = geom if geom.geom_type == "Point" else geom.centroid
+        tree_id = row["id"]
+        results.append({
+            "id":                  int(tree_id) if not isinstance(tree_id, str) else tree_id,
+            "lon":                 round(float(ref.x), 6),
+            "lat":                 round(float(ref.y), 6),
+            "cwsi":                round(float(row["cwsi"]), 4),
+            "rendement_kg_predit": round(float(predictions[i]), 2),
+        })
+
+    return {
+        "mission_id": mission_id,
+        "n_arbres":   len(results),
+        "modele":     _MODEL_PATH.name,
+        "predictions": results,
+    }
 
 
 @router.delete("/{mission_id}/ortho/{ortho_type}/{fmt}")

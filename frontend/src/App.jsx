@@ -1,20 +1,24 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import logoSvg from './assets/images/logo.svg'
 import { ToastProvider } from './hooks/useToast'
+import { useToast }       from './hooks/useToast'
 import { useMissions }    from './hooks/useMissions'
 import { useMissionData } from './hooks/useMissionData'
 import TreeMap        from './components/TreeMap'
 import StatsPanel     from './components/StatsPanel'
 import Legend         from './components/Legend'
 import TrendPanel     from './components/TrendPanel'
+import AnomalyPanel   from './components/AnomalyPanel'
 import MissionSelector from './components/MissionSelector'
 import MissionManager  from './components/MissionManager'
 import { StatsSkeleton } from './components/Skeleton'
 import { STRESS_COLORS } from './constants'
 import MCDAPanel from './components/MCDAPanel'
+import { fetchAnomalies, fetchYieldPredictions } from './api'
 import {
   LuDroplets, LuTriangleAlert, LuMap, LuRoute,
   LuSlidersHorizontal, LuSatellite, LuTrendingUp, LuSettings, LuHexagon,
+  LuScanSearch, LuLeaf,
 } from 'react-icons/lu'
 
 
@@ -74,6 +78,7 @@ function LoadingScreen() {
 
 /* ── Dashboard principal (dans le ToastProvider) ── */
 function Dashboard() {
+  const toast = useToast()
   const { missions, loading, refresh } = useMissions()
   const [currentId, setCurrentId]       = useState(null)
   const [activeStress, setActiveStress] = useState([...STRESS_LEVELS])
@@ -93,6 +98,21 @@ function Dashboard() {
   const [sectorCount,   setSectorCount]   = useState(3)
   const [showHexbins,   setShowHexbins]   = useState(false)
 
+  // ── Détection d'anomalies ────────────────────────────────────────────────
+  const [showAnomalies,  setShowAnomalies]  = useState(false)
+  const [anomalyData,    setAnomalyData]    = useState(null)
+  const [anomalyLoading, setAnomalyLoading] = useState(false)
+
+  // ── Prédiction de rendement IA ───────────────────────────────────────────
+  // yieldPredictions : dict { treeId → rendement_kg_predit } pour lookup O(1)
+  // mapMode          : 'stress' (défaut) | 'yield'
+  const [yieldPredictions, setYieldPredictions] = useState(null)
+  const [mapMode,          setMapMode]          = useState('stress')
+  const [yieldLoading,     setYieldLoading]     = useState(false)
+
+  // ── Filtre IA carte (déclenché par l'agent chat) ─────────────────────────
+  const [mapFilter, setMapFilter] = useState(null)
+
   // ── Filtres cross-critères (état global → source unique pour carte + stats) ─
   // null = inactif (toutes les valeurs passent) ; [min, max] = filtre actif.
   const [filterHauteur, setFilterHauteur] = useState(null)
@@ -108,6 +128,21 @@ function Dashboard() {
       setCurrentId(withData?.id || missions[0]?.id || null)
     }
   }, [loading, missions])
+
+  // Charge les anomalies quand le mode est activé ; les efface quand il est coupé.
+  useEffect(() => {
+    if (!showAnomalies || !currentId) {
+      setAnomalyData(null)
+      return
+    }
+    let cancelled = false
+    setAnomalyLoading(true)
+    fetchAnomalies(currentId)
+      .then(data => { if (!cancelled) setAnomalyData(data) })
+      .catch(e   => { if (!cancelled) { toast(e.message, 'error'); setShowAnomalies(false) } })
+      .finally(() => { if (!cancelled) setAnomalyLoading(false) })
+    return () => { cancelled = true }
+  }, [showAnomalies, currentId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { geojson, stats, dataLoading } = useMissionData(currentId, missions)
   const { geojson: geojsonCompare, stats: statsCompare } =
@@ -184,6 +219,35 @@ function Dashboard() {
     return activeStress.includes(s)
   }).length ?? 0
 
+  async function handlePredictYield() {
+    if (!currentMission || yieldLoading) return
+    setYieldLoading(true)
+    try {
+      const data = await fetchYieldPredictions(currentMission.id)
+      // Transforme le tableau en dict { id → rendement_kg } pour lookup O(1) dans TreeMap
+      const dict = {}
+      data.predictions.forEach(p => { dict[p.id] = p.rendement_kg_predit })
+      setYieldPredictions(dict)
+      setMapMode('yield')
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setYieldLoading(false)
+    }
+  }
+
+  function handleResetMode() {
+    setMapMode('stress')
+  }
+
+  function handleMapAction(action) {
+    if (!action || action.action === 'reset') {
+      setMapFilter(null)
+    } else {
+      setMapFilter(action)
+    }
+  }
+
   function handleSelect(id) {
     setCurrentId(id)
     setActiveStress([...STRESS_LEVELS])
@@ -191,6 +255,11 @@ function Dashboard() {
     setFilterHauteur(null)
     setFilterTemp(null)
     setFilterCwsi(null)
+    setShowAnomalies(false)
+    setAnomalyData(null)
+    setMapMode('stress')
+    setYieldPredictions(null)
+    setMapFilter(null)
     if (id === compareId) setCompareId(null)
   }
 
@@ -301,6 +370,9 @@ function Dashboard() {
                 onClearZonal={() => setSelectedTrees(null)}
                 features={selectedTrees}
                 allFeatures={filteredGeojson?.features ?? []}
+                anomalyData={anomalyData}
+                yieldPredictions={yieldPredictions}
+                onMapAction={handleMapAction}
               />
           }
 
@@ -414,6 +486,36 @@ function Dashboard() {
               />
             </div>
           )}
+
+          {hasMapData && (
+            <button
+              className={`btn-anomaly${showAnomalies ? ' active' : ''}`}
+              onClick={() => setShowAnomalies(v => !v)}
+              disabled={anomalyLoading}
+            >
+              <LuScanSearch size={16} />
+              {anomalyLoading
+                ? 'Analyse en cours…'
+                : showAnomalies
+                  ? 'Masquer les anomalies'
+                  : 'Détecter les anomalies IA'}
+            </button>
+          )}
+
+          {hasMapData && (
+            <button
+              className={`btn-yield${mapMode === 'yield' ? ' active' : ''}`}
+              onClick={mapMode === 'yield' ? () => setMapMode('stress') : handlePredictYield}
+              disabled={yieldLoading}
+            >
+              <LuLeaf size={16} />
+              {yieldLoading
+                ? 'Calcul en cours…'
+                : mapMode === 'yield'
+                  ? 'Revenir au mode stress'
+                  : 'Prédire le rendement (IA)'}
+            </button>
+          )}
         </div>
       </aside>
 
@@ -450,6 +552,14 @@ function Dashboard() {
           onCwsiChange={setFilterCwsi}
           onFilterReset={resetFilters}
           totalCount={geojson?.features?.length ?? 0}
+          showAnomalies={showAnomalies}
+          anomalyData={anomalyData}
+          anomalyLoading={anomalyLoading}
+          onToggleAnomalies={() => setShowAnomalies(v => !v)}
+          mapMode={mapMode}
+          yieldPredictions={yieldPredictions}
+          mapFilter={mapFilter}
+          onMapFilterReset={() => setMapFilter(null)}
         />
 
         {/* Indicateurs quand aucune donnée */}
@@ -481,7 +591,33 @@ function Dashboard() {
           </span>
         </div>
         <div className="panel-float-body">
+
+          {/* ── Boutons mode rendement IA ── */}
+          {hasMapData && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className={`btn-yield${mapMode === 'yield' ? ' active' : ''}`}
+                style={{ flex: 1 }}
+                onClick={handlePredictYield}
+                disabled={yieldLoading}
+                title="Prédire le rendement par arbre via le modèle IA"
+              >
+                {yieldLoading ? '⏳ Calcul…' : '✨ Prédire le rendement'}
+              </button>
+              <button
+                className={`btn-idw${mapMode === 'stress' ? ' active' : ''}`}
+                style={{ flex: 1 }}
+                onClick={handleResetMode}
+                title="Revenir à la vue stress hydrique"
+              >
+                💧 Vue Stress
+              </button>
+            </div>
+          )}
+
           <TrendPanel missions={missions} currentId={currentId} geojson={filteredGeojson} />
+
+          {anomalyData && <AnomalyPanel anomalyData={anomalyData} />}
 
           <Legend
             activeStress={activeStress}

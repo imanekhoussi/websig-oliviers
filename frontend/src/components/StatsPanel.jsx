@@ -44,10 +44,15 @@ export default function StatsPanel({
   stats, mission, statsCompare, missionCompare,
   isZonalActive = false, onClearZonal, features,
   allFeatures = [],
+  anomalyData = null,
+  yieldPredictions = null,
+  onMapAction = null,
 }) {
   const isCompare = !!(statsCompare && missionCompare)
-  const [showAnalytics, setShowAnalytics] = useState(false)
-  const [showAiModal,   setShowAiModal]   = useState(false)
+  const [showAnalytics,  setShowAnalytics]  = useState(false)
+  const [showAiModal,    setShowAiModal]    = useState(false)
+  // L'historique du chat est conservé dans StatsPanel (survit aux fermetures de la modale)
+  const [chatMessages,   setChatMessages]   = useState([])
 
   const stressChartData = useMemo(() => {
     if (!stats?.stress_breakdown) return []
@@ -196,26 +201,41 @@ export default function StatsPanel({
       )}
 
       {/* ── Répartition stress ── */}
-      <h3>Répartition par stress</h3>
-      <div style={{ width: '100%', height: 210 }}>
+      <h3 style={{ marginBottom: 2 }}>Répartition par stress</h3>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '0 0 6px', lineHeight: 1.4 }}>
+        (CWSI : Valeur moyenne de l'indice de stress hydrique pour cette catégorie)
+      </p>
+      <div style={{ width: '100%', height: 310 }}>
         <ResponsiveContainer>
           <BarChart
             data={stressChartData}
-            margin={{ top: 24, right: 6, left: 15, bottom: 20 }}
+            margin={{ top: 24, right: 6, left: 22, bottom: 8 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
             <XAxis
               dataKey="label"
-              interval={0} fontSize={11}
+              interval={0}
+              fontSize={11}
+              angle={-45}
+              textAnchor="end"
               tick={{ fill: '#94a3b8' }}
               tickLine={false}
               axisLine={{ stroke: 'rgba(148,163,184,0.15)' }}
+              height={55}
             />
             <YAxis
-              fontSize={12}
+              fontSize={11}
               tick={{ fill: '#94a3b8' }}
-              tickLine={false} axisLine={false}
-              width={40}
+              tickLine={false}
+              axisLine={false}
+              width={48}
+              label={{
+                value: "Nb d'oliviers",
+                angle: -90,
+                position: 'insideLeft',
+                offset: 10,
+                style: { fill: '#94a3b8', fontSize: 10 },
+              }}
             />
             <Tooltip content={<StressTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
             <Bar dataKey="count" radius={[4, 4, 0, 0]}>
@@ -225,14 +245,35 @@ export default function StatsPanel({
               <LabelList
                 dataKey="avgCwsi"
                 position="top"
-                formatter={val => val != null ? `Moy: ${val}` : ''}
+                formatter={val => val != null ? `CWSI: ${val}` : ''}
                 fill="var(--text-main)"
-                fontSize={11}
+                fontSize={10}
               />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
+
+      {/* ── Carte anomalies IA ── */}
+      {anomalyData && (
+        <div className={`anomaly-stats-card ${anomalyData.n_anomalies > 0 ? 'has-anomalies' : 'no-anomalies'}`}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div className="anomaly-stats-title">Détection d'anomalies IA</div>
+              <div className="anomaly-stats-subtitle">Isolation Forest — 10% contamination</div>
+            </div>
+            <div>
+              <span className="anomaly-stats-count">{anomalyData.n_anomalies}</span>
+              <span className="anomaly-stats-total">/ {anomalyData.total_arbres}</span>
+            </div>
+          </div>
+          <div className="anomaly-stats-footer">
+            {anomalyData.n_anomalies > 0
+              ? `${anomalyData.n_anomalies} arbre${anomalyData.n_anomalies > 1 ? 's' : ''} présentent des valeurs atypiques`
+              : 'Aucune anomalie détectée'}
+          </div>
+        </div>
+      )}
 
       {/* ── Bouton analyses détaillées ── */}
       <button
@@ -249,7 +290,7 @@ export default function StatsPanel({
         className="ai-advice-btn"
         onClick={() => setShowAiModal(true)}
       >
-        ✨ Générer le conseil agronomique par IA
+        🌿 Ouvrir l'Agronome IA
       </button>
 
       {/* ── Modal conseiller IA ── */}
@@ -257,6 +298,11 @@ export default function StatsPanel({
         <AiAdvisorModal
           mission={mission}
           onClose={() => setShowAiModal(false)}
+          stats={stats}
+          yieldPredictions={yieldPredictions}
+          messages={chatMessages}
+          setMessages={setChatMessages}
+          onMapAction={onMapAction}
         />
       )}
 

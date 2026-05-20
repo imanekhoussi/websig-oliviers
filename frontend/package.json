@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@turf/turf": "^7.3.4",
+    "deck.gl": "^9.3.2",
     "georaster": "^1.6.0",
     "georaster-layer-for-leaflet": "^4.1.2",
     "leaflet": "^1.9.4",
