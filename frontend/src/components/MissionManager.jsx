@@ -50,6 +50,8 @@ export default function MissionManager({ missions, onRefresh, onClose, onMission
     }
   }
 
+  console.log('[Mount] MissionManager est en cours de rendu dans le DOM !');
+
   return createPortal(
     <>
       <div className="mm-backdrop" onClick={onClose}>

@@ -12,8 +12,7 @@ import {
   LuX, LuChartBar, LuWind, LuGitBranchPlus, LuDroplet, LuThermometer,
 } from 'react-icons/lu'
 
-// ── Constantes agro (dupliquées depuis StatsPanel, source unique cohérente) ──
-const KC_BY_STAGE = { hiver: 0.45, printemps: 0.65, ete: 0.70 }
+const KC_DEFAULT = { hiver: 0.45, printemps: 0.65, ete: 0.70 }
 
 const SOIL_PROFILES = {
   sableux: {
@@ -96,14 +95,23 @@ export default function AnalyticsModal({
   features,
   allFeatures = [],
   onClose,
+  parcelSettings = null,
 }) {
   const isCompare = !!(statsCompare && missionCompare)
 
-  // ── État local ─────────────────────────────────────────────────────────────
-  const [waterCostPerM3,       setWaterCostPerM3]       = useState(0)
-  const [energyKwhPerM3,       setEnergyKwhPerM3]       = useState(0.75)
-  const [energyPriceMad,       setEnergyPriceMad]       = useState(1.05)
-  const [irrigationEfficiency, setIrrigationEfficiency] = useState(0.90)
+  // Quand aucun polygone n'est dessiné, on calcule sur l'ensemble de la parcelle
+  const effectiveFeatures = (isZonalActive ? features : allFeatures) ?? []
+
+  // Kc depuis les paramètres persistants ou valeurs FAO-56 par défaut
+  const kcByStage = parcelSettings
+    ? { hiver: parcelSettings.kcHiver, printemps: parcelSettings.kcPrintemps, ete: parcelSettings.kcEte }
+    : KC_DEFAULT
+
+  // ── État local (initialisé depuis parcelSettings si disponible) ────────────
+  const [waterCostPerM3,       setWaterCostPerM3]       = useState(() => parcelSettings?.waterCost         ?? 0)
+  const [energyKwhPerM3,       setEnergyKwhPerM3]       = useState(() => parcelSettings?.energyKwh         ?? 0.75)
+  const [energyPriceMad,       setEnergyPriceMad]       = useState(() => parcelSettings?.energyPrice       ?? 1.05)
+  const [irrigationEfficiency, setIrrigationEfficiency] = useState(() => parcelSettings?.irrigationEfficiency ?? 0.90)
   const [phenoStage,           setPhenoStage]           = useState('printemps')
   const [soilType,             setSoilType]             = useState('limoneux')
   const [forecastData,         setForecastData]         = useState(null)
@@ -112,16 +120,15 @@ export default function AnalyticsModal({
   const [isLoadingChergui,     setIsLoadingChergui]     = useState(false)
   const [xMetric,              setXMetric]              = useState('height') // 'height' | 'circumference'
 
-  // ── Fetch ET0 Penman-Monteith ──────────────────────────────────────────────
+  // ── Fetch ET0 Penman-Monteith (déclenché à l'ouverture du modal) ──────────
   useEffect(() => {
-    if (!isZonalActive) return
     setIsFetchingMeteo(true)
     fetch('https://api.open-meteo.com/v1/forecast?latitude=35.76&longitude=-5.83&daily=et0_fao_evapotranspiration&timezone=Africa%2FCasablanca')
       .then(r => r.json())
       .then(data => { if (data?.daily) setForecastData(data.daily) })
       .catch(() => {})
       .finally(() => setIsFetchingMeteo(false))
-  }, [isZonalActive])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Fetch Chergui inter-missions ───────────────────────────────────────────
   useEffect(() => {
@@ -150,25 +157,25 @@ export default function AnalyticsModal({
   }, [isCompare, mission?.date, missionCompare?.date]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const todayEt0 = forecastData?.et0_fao_evapotranspiration?.[0] ?? 4.0
-  const kc       = KC_BY_STAGE[phenoStage] ?? 0.65
+  const kc       = kcByStage[phenoStage] ?? 0.65
 
   const totalDeficitM3 = useMemo(() => {
-    if (!isZonalActive || !features?.length) return 0
+    if (!effectiveFeatures.length) return 0
     const etcWeekly = todayEt0 * kc * 7
     let liters = 0
-    features.forEach(feat => {
+    effectiveFeatures.forEach(feat => {
       const area = turf.area(feat)
       const cwsi = feat.properties.cwsi
       if (cwsi == null || isNaN(cwsi) || cwsi < 0) return
       liters += (area * etcWeekly * Math.min(cwsi, 1.0)) / irrigationEfficiency
     })
     return (liters / 1000).toFixed(2)
-  }, [isZonalActive, features, todayEt0, irrigationEfficiency, kc])
+  }, [effectiveFeatures, todayEt0, irrigationEfficiency, kc])
 
   const projectionChartData = useMemo(() => {
-    if (!isZonalActive || !features?.length || !forecastData) return []
+    if (!effectiveFeatures.length || !forecastData) return []
     let totalArea = 0
-    features.forEach(f => { totalArea += turf.area(f) })
+    effectiveFeatures.forEach(f => { totalArea += turf.area(f) })
     if (!totalArea) return []
     const M = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc']
     return forecastData.time.slice(0, 7).map((iso, i) => {
@@ -179,7 +186,7 @@ export default function AnalyticsModal({
         besoinM3: parseFloat(((totalArea * et0 * kc) / irrigationEfficiency / 1000).toFixed(2)),
       }
     })
-  }, [isZonalActive, features, forecastData, irrigationEfficiency, kc])
+  }, [effectiveFeatures, forecastData, irrigationEfficiency, kc])
 
   const scatterData = useMemo(() => {
     const src = isZonalActive ? (features ?? []) : allFeatures
@@ -228,7 +235,7 @@ export default function AnalyticsModal({
             {/* ── Distribution CWSI ── */}
             <div className="am-card">
               <h4 className="am-card-title">Distribution CWSI</h4>
-              <div className="am-chart-wrap" style={{ height: 340 }}>
+              <div className="am-chart-wrap">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={stats.histogram_cwsi}
@@ -291,7 +298,7 @@ export default function AnalyticsModal({
                 <>
                   <div className="am-chart-wrap">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ScatterChart margin={{ top: 6, right: 10, left: 0, bottom: 6 }}>
+                      <ScatterChart margin={{ top: 15, right: 20, left: 0, bottom: 30 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.3)" />
                         <XAxis
                           dataKey={xMetric === 'height' ? 'hauteur' : 'circonf'}
@@ -398,11 +405,15 @@ export default function AnalyticsModal({
             )}
 
             {/* ── Bilan Hydrique FAO-56 + Prévision J+7 ── */}
-            {isZonalActive && features?.length > 0 && (
+            {effectiveFeatures.length > 0 && (
               <div className="am-card am-card-full">
                 <h4 className="am-card-title">
                   <LuDroplet size={13} style={{ color: '#3b82f6' }} />
                   Bilan Hydrique (FAO-56)
+                  {isZonalActive
+                    ? <span className="am-zone-badge am-zone-badge--zonal">Zone · {effectiveFeatures.length} arbres</span>
+                    : <span className="am-zone-badge am-zone-badge--global">Parcelle complète · {effectiveFeatures.length} arbres</span>
+                  }
                   {isFetchingMeteo && <span className="am-loading-badge">⏳ Météo…</span>}
                 </h4>
 
@@ -413,9 +424,9 @@ export default function AnalyticsModal({
                     <div className="wb-row">
                       <label className="wb-label" htmlFor="am-pheno">Stade phénologique</label>
                       <select id="am-pheno" className="wb-select" value={phenoStage} onChange={e => setPhenoStage(e.target.value)}>
-                        <option value="hiver">Hiver (Kc = 0.45)</option>
-                        <option value="printemps">Printemps / Floraison (Kc = 0.65)</option>
-                        <option value="ete">Été / Développement noyau (Kc = 0.70)</option>
+                        <option value="hiver">Hiver (Kc = {kcByStage.hiver})</option>
+                        <option value="printemps">Printemps / Floraison (Kc = {kcByStage.printemps})</option>
+                        <option value="ete">Été / Développement noyau (Kc = {kcByStage.ete})</option>
                       </select>
                     </div>
 

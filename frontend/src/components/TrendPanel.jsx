@@ -31,7 +31,7 @@ function TrendTooltip({ active, payload, label }) {
   )
 }
 
-export default function TrendPanel({ missions, currentId, geojson }) {
+export default function TrendPanel({ missions, currentId, geojson, onSelectMission }) {
   const [data,               setData]               = useState([])
   const [loading,            setLoading]            = useState(false)
   const [historicalInsights, setHistoricalInsights] = useState(null)
@@ -133,8 +133,17 @@ export default function TrendPanel({ missions, currentId, geojson }) {
 
       {!loading && data.length > 0 && (
         <>
-          <ResponsiveContainer width="100%" height={130}>
-            <LineChart data={data} margin={{ top: 10, right: 10, left: 15, bottom: 25 }}>
+          <ResponsiveContainer width="100%" height={145}>
+            <LineChart
+              data={data}
+              margin={{ top: 10, right: 10, left: 15, bottom: 25 }}
+              onClick={e => {
+                if (!e?.activePayload?.[0]) return
+                const clicked = e.activePayload[0].payload
+                if (onSelectMission && clicked?.id) onSelectMission(clicked.id)
+              }}
+              style={{ cursor: 'pointer' }}
+            >
               <CartesianGrid
                 strokeDasharray="4 4"
                 stroke="rgba(148,163,184,0.08)"
@@ -170,8 +179,16 @@ export default function TrendPanel({ missions, currentId, geojson }) {
                 dataKey="cwsi"
                 stroke="#38bdf8"
                 strokeWidth={2.5}
-                dot={{ fill: '#38bdf8', r: 4, strokeWidth: 0 }}
-                activeDot={{ r: 6, fill: '#38bdf8', stroke: 'white', strokeWidth: 2 }}
+                dot={({ cx, cy, payload }) => (
+                  <circle
+                    key={payload.id}
+                    cx={cx} cy={cy} r={payload.id === currentId ? 6 : 4}
+                    fill={payload.id === currentId ? '#22c55e' : '#38bdf8'}
+                    stroke="white" strokeWidth={payload.id === currentId ? 2.5 : 1.5}
+                    style={{ cursor: 'pointer' }}
+                  />
+                )}
+                activeDot={{ r: 7, fill: '#38bdf8', stroke: 'white', strokeWidth: 2 }}
                 connectNulls
               />
               {missionActive?.cwsi != null && (

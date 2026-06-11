@@ -15,3 +15,24 @@ export const STRESS_LABELS = {
   severe: 'Stress sévère',
   inconnu: 'Inconnu',
 }
+
+export const DEFAULT_CWSI_THRESHOLDS = [0.1, 0.3, 0.5, 0.7]
+
+export const SETTINGS_KEY = 'geoOlive_parcel_settings'
+
+export const DEFAULT_SETTINGS = {
+  parcelName: '',
+  owner: '',
+  variety: 'Picholine marocaine',
+  surface: '',
+  cwsiThresholds: [0.1, 0.3, 0.5, 0.7],
+  kcHiver: 0.45,
+  kcPrintemps: 0.65,
+  kcEte: 0.70,
+  irrigationType: 'goutte_a_goutte',
+  irrigationEfficiency: 0.90,
+  pumpFlow: 5,
+  waterCost: 0,
+  energyKwh: 0.75,
+  energyPrice: 1.05,
+}

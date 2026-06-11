@@ -13,19 +13,16 @@ from fastapi.responses import Response
 from typing import List, Optional
 from pydantic import BaseModel, field_validator
 import numpy as np
-import joblib
 import pandas as pd
 from fpdf import FPDF
 
 import missions_manager as mm
 import geoprocessing
+import rendement_predictor
 from data_loader import load_trees
 from config import STRESS_COLORS
 
 router = APIRouter(prefix="/api/missions", tags=["missions"])
-
-_MODEL_PATH    = Path("modele_rendement_olivier.joblib")
-_YIELD_FEATURES = ["hauteur_m", "cwsi_ete", "temp_moy_c"]   # ordre attendu par le modèle
 
 
 class CWSIPayload(BaseModel):
@@ -258,28 +255,13 @@ def compute_cwsi(mission_id: str, payload: CWSIPayload):
 @router.post("/{mission_id}/predict-yield")
 def predict_yield(mission_id: str):
     """
-    Prédit le rendement (kg/arbre) via un modèle Scikit-Learn pré-entraîné.
-
-    Fichier attendu dans backend/ : modele_rendement_olivier.joblib
-    Features : hauteur (m), cwsi, temp_moy (°C)
+    Prédit le rendement (kg/arbre) via rendement_predictor (singleton).
+    Features : CWSI, chm_max, chm_mean, surface_couronne, T_mean, T_min, T_max.
+    Valeurs manquantes imputées à 0. Répond dans le format historique pour
+    compatibilité avec PredictiveAnalysis.jsx.
     """
-    # ── Vérification du modèle ───────────────────────────────────────────────
-    if not _MODEL_PATH.exists():
-        raise HTTPException(
-            503,
-            f"Modèle introuvable : '{_MODEL_PATH}'. "
-            "Placez le fichier 'modele_rendement_olivier.joblib' dans le dossier backend/.",
-        )
-    try:
-        model = joblib.load(_MODEL_PATH)
-    except Exception as exc:
-        raise HTTPException(503, f"Impossible de charger le modèle : {exc}")
-
-    # ── Vérification de la mission ───────────────────────────────────────────
     if mm.get_mission(mission_id) is None:
         raise HTTPException(404, f"Mission '{mission_id}' introuvable.")
-
-    # ── Chargement des arbres ────────────────────────────────────────────────
     try:
         gdf = load_trees(mission_id)
     except FileNotFoundError as exc:
@@ -287,51 +269,106 @@ def predict_yield(mission_id: str):
     except ValueError as exc:
         raise HTTPException(422, str(exc))
 
-    # ── Préparation des features ─────────────────────────────────────────────
-    # On conserve les noms de colonnes source ('hauteur', 'cwsi', 'temp_moy')
-    # tout au long du nettoyage, puis on renomme explicitement au dernier
-    # moment pour construire la matrice X dans l'ordre attendu par le modèle.
-    _SRC = ["hauteur", "cwsi", "temp_moy"]
-    _RENAME = {"hauteur": "hauteur_m", "cwsi": "cwsi_ete", "temp_moy": "temp_moy_c"}
+    if gdf.empty:
+        raise HTTPException(422, "Aucun arbre dans cette mission.")
 
-    df = gdf[["id", "geometry"] + _SRC].copy()
-    df = df.dropna(subset=_SRC)
+    try:
+        preds_arr = rendement_predictor.predire_batch(gdf)
+    except FileNotFoundError as exc:
+        raise HTTPException(503, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"Erreur prédiction : {exc}")
 
-    if df.empty:
-        raise HTTPException(
-            422,
-            "Aucun arbre ne possède les trois colonnes requises "
-            "(hauteur, cwsi, temp_moy) avec des valeurs non nulles.",
-        )
-
-    X: np.ndarray = (
-        df[_SRC]
-        .rename(columns=_RENAME)
-        .astype(float)
-        .values
-    )
-    predictions = model.predict(X)
-
-    # ── Construction de la réponse ───────────────────────────────────────────
     results = []
-    for i, (_, row) in enumerate(df.iterrows()):
+    for i, (_, row) in enumerate(gdf.iterrows()):
         geom = row.geometry
         ref  = geom if geom.geom_type == "Point" else geom.centroid
-        tree_id = row["id"]
+        tid  = row["id"]
+        cwsi_val = row.get("cwsi") if hasattr(row, "get") else getattr(row, "cwsi", None)
+        try:
+            cwsi_rounded = round(float(cwsi_val), 4) if cwsi_val is not None else None
+        except (TypeError, ValueError):
+            cwsi_rounded = None
         results.append({
-            "id":                  int(tree_id) if not isinstance(tree_id, str) else tree_id,
+            "id":                  int(tid) if not isinstance(tid, str) else tid,
             "lon":                 round(float(ref.x), 6),
             "lat":                 round(float(ref.y), 6),
-            "cwsi":                round(float(row["cwsi"]), 4),
-            "rendement_kg_predit": round(float(predictions[i]), 2),
+            "cwsi":                cwsi_rounded,
+            "rendement_kg_predit": round(float(preds_arr[i]), 2),
         })
 
     return {
-        "mission_id": mission_id,
-        "n_arbres":   len(results),
-        "modele":     _MODEL_PATH.name,
+        "mission_id":  mission_id,
+        "n_arbres":    len(results),
+        "modele":      rendement_predictor.MODEL_PATH.name,
         "predictions": results,
     }
+
+
+@router.get("/{mission_id}/rendement")
+def get_rendement(mission_id: str):
+    """
+    Retourne les prédictions de rendement + agrégats pour tous les arbres
+    de la mission.
+
+    Réponse :
+      {
+        "mission_id": "...",
+        "predictions": [{"tree_id": ..., "rendement_kg": ...}, ...],
+        "aggregats": {
+          "rendement_total_kg": ...,
+          "rendement_moyen_kg": ...,
+          "nb_arbres": ...
+        }
+      }
+    """
+    if mm.get_mission(mission_id) is None:
+        raise HTTPException(404, f"Mission '{mission_id}' introuvable.")
+    try:
+        gdf = load_trees(mission_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+    if gdf.empty:
+        raise HTTPException(422, "Aucun arbre dans cette mission.")
+
+    try:
+        preds_arr = rendement_predictor.predire_batch(gdf)
+    except FileNotFoundError as exc:
+        raise HTTPException(503, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"Erreur prédiction : {exc}")
+
+    predictions = []
+    for i, (_, row) in enumerate(gdf.iterrows()):
+        tid = row["id"]
+        predictions.append({
+            "tree_id":     int(tid) if not isinstance(tid, str) else tid,
+            "rendement_kg": round(float(preds_arr[i]), 2),
+        })
+
+    yields     = [p["rendement_kg"] for p in predictions]
+    total      = sum(yields)
+    nb         = len(yields)
+    moyen      = total / nb if nb else 0.0
+
+    return {
+        "mission_id":  mission_id,
+        "predictions": predictions,
+        "aggregats": {
+            "rendement_total_kg": round(total, 2),
+            "rendement_moyen_kg": round(moyen, 2),
+            "nb_arbres":          nb,
+        },
+    }
+
+
+@router.get("/{mission_id}/yield-predictions")
+def get_yield_predictions(mission_id: str):
+    """GET alias de predict-yield pour les appels multi-missions en parallèle."""
+    return predict_yield(mission_id)
 
 
 @router.delete("/{mission_id}/ortho/{ortho_type}/{fmt}")

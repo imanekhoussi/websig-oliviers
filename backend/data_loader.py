@@ -69,8 +69,7 @@ def _load_raw_trees(mission_id: str) -> gpd.GeoDataFrame:
         "chm_mean":  "hauteur",
         "cwsi_mean": "cwsi",
     })
-    for col in ("id", "hauteur", "temp_moy", "temp_min", "temp_max",
-                "cwsi", "circonf"):
+    for col in ("id", "hauteur", "temp_moy", "temp_min", "temp_max", "cwsi", "circonf"):
         if col not in gdf.columns:
             gdf[col] = None
 

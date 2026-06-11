@@ -4,10 +4,24 @@ import {
   ResponsiveContainer, Cell, CartesianGrid, LabelList,
 } from 'recharts'
 import { STRESS_COLORS } from '../constants'
-import { exportXlsxUrl, exportPdfUrl } from '../api'
-import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind, LuChartBar } from 'react-icons/lu'
+// exportXlsxUrl / exportPdfUrl moved to ExportModal
+import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind, LuChartBar, LuChevronLeft, LuChevronRight, LuTrees } from 'react-icons/lu'
 import AnalyticsModal from './AnalyticsModal'
 import AiAdvisorModal from './AiAdvisorModal'
+// Note: export buttons removed — export is now in the ExportModal (navbar "Extraire")
+
+function cwsiColor(val) {
+  if (val == null) return 'var(--text-main)'
+  if (val < 0.4) return 'var(--color-success)'
+  if (val < 0.7) return 'var(--color-warning)'
+  return 'var(--color-danger)'
+}
+function cwsiBg(val) {
+  if (val == null) return 'var(--bg-elevated)'
+  if (val < 0.4) return 'var(--color-success-dim)'
+  if (val < 0.7) return 'var(--color-warning-dim)'
+  return 'var(--color-danger-dim)'
+}
 
 const SHORT_STRESS = { aucun: 'Aucun', faible: 'Faible', modere: 'Modéré', eleve: 'Élevé', severe: 'Sévère', inconnu: '—' }
 
@@ -47,10 +61,19 @@ export default function StatsPanel({
   anomalyData = null,
   yieldPredictions = null,
   onMapAction = null,
+  parcelSettings = null,
+  missions = [],
+  currentId = null,
+  onSelectMission = null,
 }) {
   const isCompare = !!(statsCompare && missionCompare)
   const [showAnalytics,  setShowAnalytics]  = useState(false)
   const [showAiModal,    setShowAiModal]    = useState(false)
+
+  // Mini navigation prev/next mission
+  const missionIdx = missions.findIndex(m => m.id === currentId)
+  const prevMission = missionIdx > 0 ? missions[missionIdx - 1] : null
+  const nextMission = missionIdx >= 0 && missionIdx < missions.length - 1 ? missions[missionIdx + 1] : null
   // L'historique du chat est conservé dans StatsPanel (survit aux fermetures de la modale)
   const [chatMessages,   setChatMessages]   = useState([])
 
@@ -95,8 +118,11 @@ export default function StatsPanel({
     )
   }
 
+  console.log('[Render StatsPanel] État showAnalytics:', showAnalytics);
+
   return (
     <div className="panel">
+
 
       {/* ── Bannière sélection zonale ── */}
       {isZonalActive && (
@@ -124,26 +150,6 @@ export default function StatsPanel({
             <div className="mission-date">{mission.date}</div>
           </div>
 
-          <div className="mission-export-actions">
-            <a
-              href={exportXlsxUrl(mission.id, features?.map(f => f.properties.id))}
-              download
-              className="btn-export-xlsx"
-              title={isZonalActive ? 'Exporter la sélection (Excel)' : 'Télécharger le rapport complet (Excel)'}
-            >
-              📊 {isZonalActive ? 'Sélection' : 'Excel'}
-            </a>
-            {!isZonalActive && (
-              <a
-                href={exportPdfUrl(mission.id)}
-                download
-                className="btn-export-pdf"
-                title="Télécharger le rapport PDF"
-              >
-                📄 PDF
-              </a>
-            )}
-          </div>
 
         </div>
         {mission.notes && <p className="notes">{mission.notes}</p>}
@@ -156,47 +162,49 @@ export default function StatsPanel({
         )}
       </div>
 
-      {/* ── KPIs (mode normal ou comparaison) ── */}
+      {/* ── KPIs ── */}
       {isCompare ? (
         <div className="kpis-compare">
           <div className="kpis-compare-col">
             <div className="kpis-compare-label">{mission.nom || mission.id}</div>
-            <Kpi label="Arbres"    value={stats.total_arbres}                                                             icon="🌳" />
-            <Kpi label="CWSI moy." value={stats.cwsi.moyenne?.toFixed(2) ?? '—'}                                         icon={<LuDroplet size={11} />} />
-            <Kpi label="T° moy."   value={stats.temperature.moyenne != null ? `${stats.temperature.moyenne.toFixed(1)}°C` : '—'} icon={<LuThermometer size={11} />} />
+            <Kpi label="Arbres"    value={stats.total_arbres} unit=""       icon={<LuTrees size={14} />} />
+            <Kpi label="CWSI moy." value={stats.cwsi.moyenne?.toFixed(2) ?? '—'} unit="" icon={<LuDroplet size={14} />} accent={cwsiColor(stats.cwsi.moyenne)} bg={cwsiBg(stats.cwsi.moyenne)} />
+            <Kpi label="T° moy."   value={stats.temperature.moyenne?.toFixed(1) ?? '—'} unit="°C" icon={<LuThermometer size={14} />} />
           </div>
           <div className="kpis-compare-divider" />
           <div className="kpis-compare-col">
             <div className="kpis-compare-label">{missionCompare.nom || missionCompare.id}</div>
-            <KpiDelta
-              label="Arbres"
-              value={statsCompare.total_arbres}
-              delta={statsCompare.total_arbres - stats.total_arbres}
-              neutral
-            />
-            <KpiDelta
-              label="CWSI moy."
-              value={statsCompare.cwsi.moyenne?.toFixed(2) ?? '—'}
-              delta={statsCompare.cwsi.moyenne != null && stats.cwsi.moyenne != null
-                ? statsCompare.cwsi.moyenne - stats.cwsi.moyenne
-                : null}
-              lowerIsBetter
-            />
-            <KpiDelta
-              label="T° moy."
-              value={statsCompare.temperature.moyenne != null ? `${statsCompare.temperature.moyenne.toFixed(1)}°C` : '—'}
-              delta={statsCompare.temperature.moyenne != null && stats.temperature.moyenne != null
-                ? statsCompare.temperature.moyenne - stats.temperature.moyenne
-                : null}
-              lowerIsBetter
-            />
+            <KpiDelta label="Arbres"    value={statsCompare.total_arbres} delta={statsCompare.total_arbres - stats.total_arbres} neutral />
+            <KpiDelta label="CWSI moy." value={statsCompare.cwsi.moyenne?.toFixed(2) ?? '—'} delta={statsCompare.cwsi.moyenne != null && stats.cwsi.moyenne != null ? statsCompare.cwsi.moyenne - stats.cwsi.moyenne : null} lowerIsBetter />
+            <KpiDelta label="T° moy."   value={statsCompare.temperature.moyenne != null ? `${statsCompare.temperature.moyenne.toFixed(1)}°C` : '—'} delta={statsCompare.temperature.moyenne != null && stats.temperature.moyenne != null ? statsCompare.temperature.moyenne - stats.temperature.moyenne : null} lowerIsBetter />
           </div>
         </div>
       ) : (
-        <div className="kpis">
-          <Kpi label="Arbres"    value={stats.total_arbres}                                                             icon="🌳" />
-          <Kpi label="CWSI moy." value={stats.cwsi.moyenne?.toFixed(2) ?? '—'}                                         icon={<LuDroplet size={11} />} />
-          <Kpi label="T° moy."   value={stats.temperature.moyenne != null ? `${stats.temperature.moyenne.toFixed(1)}°C` : '—'} icon={<LuThermometer size={11} />} />
+        <div className="kpis-cards">
+          <KpiCard
+            label="Arbres"
+            value={stats.total_arbres}
+            unit=""
+            icon={<LuTrees size={16} />}
+            color="var(--color-primary)"
+            bg="var(--color-primary-dim)"
+          />
+          <KpiCard
+            label="CWSI moy."
+            value={stats.cwsi.moyenne?.toFixed(2) ?? '—'}
+            unit=""
+            icon={<LuDroplet size={16} />}
+            color={cwsiColor(stats.cwsi.moyenne)}
+            bg={cwsiBg(stats.cwsi.moyenne)}
+          />
+          <KpiCard
+            label="T° moy."
+            value={stats.temperature.moyenne?.toFixed(1) ?? '—'}
+            unit="°C"
+            icon={<LuThermometer size={16} />}
+            color="var(--color-warning)"
+            bg="var(--color-warning-dim)"
+          />
         </div>
       )}
 
@@ -279,7 +287,7 @@ export default function StatsPanel({
       <button
         className="btn-primary"
         style={{ width: '100%', marginTop: 16 }}
-        onClick={() => setShowAnalytics(true)}
+        onClick={() => { console.log('[Clic] Bouton Analyses détaillées cliqué'); setShowAnalytics(true); }}
       >
         <LuChartBar size={14} style={{ marginRight: 6 }} />
         Analyses détaillées
@@ -317,25 +325,34 @@ export default function StatsPanel({
           features={features}
           allFeatures={allFeatures}
           onClose={() => setShowAnalytics(false)}
+          parcelSettings={parcelSettings}
         />
       )}
     </div>
   )
 }
 
-function Kpi({ label, value, icon }) {
+function KpiCard({ label, value, unit, icon, color, bg }) {
   return (
-    <div className="kpi">
-      <div className="kpi-value">{value}</div>
+    <div className="kpi-card" style={{ '--kpi-color': color, '--kpi-bg': bg }}>
+      <div className="kpi-card-icon">{icon}</div>
+      <div className="kpi-card-body">
+        <div className="kpi-card-value">
+          {value}
+          {unit && <span className="kpi-card-unit">{unit}</span>}
+        </div>
+        <div className="kpi-card-label">{label}</div>
+      </div>
+    </div>
+  )
+}
+
+function Kpi({ label, value, unit, icon, accent, bg }) {
+  return (
+    <div className="kpi" style={{ color: accent, background: bg }}>
+      <div className="kpi-value">{value}{unit && <span style={{ fontSize: 10, marginLeft: 2 }}>{unit}</span>}</div>
       <div className="kpi-label">
-        {icon && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center',
-            color: 'var(--text-muted)', marginRight: 3, lineHeight: 1,
-          }}>
-            {icon}
-          </span>
-        )}
+        {icon && <span style={{ display: 'inline-flex', alignItems: 'center', marginRight: 3 }}>{icon}</span>}
         {label}
       </div>
     </div>

@@ -1,0 +1,22 @@
+{
+  "date": "2026-04-28",
+  "nom": "Mission 2 — 28 avril 2026",
+  "notes": "18.61 ha, GSD 4.28 cm",
+  "meteo": {
+    "temp_air": 23.0,
+    "humidite": 47.5,
+    "vent": null
+  },
+  "has_thermal_zip": true,
+  "has_thermal_tif": false,
+  "created_at": "2026-06-01T12:09:57",
+  "ortho_formats": {
+    "rgb": "zip"
+  },
+  "ortho_status": {
+    "rgb": {
+      "has_tif": false,
+      "has_zip": true
+    }
+  }
+}

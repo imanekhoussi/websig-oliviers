@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import L from 'leaflet'
-import { MapContainer, TileLayer, LayerGroup, Marker, CircleMarker, Polygon, GeoJSON, Popup, LayersControl, Pane, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, LayerGroup, Marker, CircleMarker, Polygon, GeoJSON, Popup, Pane, useMap } from 'react-leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import 'leaflet-draw'
@@ -10,11 +10,16 @@ import {
 } from 'recharts'
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import { fetchTreeHistory } from '../api'
-import { LuThermometer, LuRuler, LuDroplet, LuFootprints } from 'react-icons/lu'
-import MapFilterOverlay from './MapFilterOverlay'
+import {
+  LuThermometer, LuRuler, LuDroplet, LuFootprints,
+  LuZoomIn, LuZoomOut, LuLocate,
+  LuPentagon, LuSquare, LuMapPin, LuPencil, LuTrash2,
+  LuTreePine, LuSatellite, LuThermometer as LuThermIcon,
+} from 'react-icons/lu'
 import WeatherWidget from './WeatherWidget'
 import { useToast } from '../hooks/useToast'
 import Deck3DOverlay from './Deck3DOverlay'
+import LayerDrawer, { BASEMAPS } from './LayerDrawer'
 
 const DEFAULT_CENTER = [35.76, -5.83]
 const DEFAULT_ZOOM   = 7
@@ -139,25 +144,23 @@ function reverseCoordinates(coords) {
 }
 
 /** Contrôleur interne : ajuste la vue pour englober toute l'emprise des données */
-function MapController({ geojson }) {
+function MapController({ geojson, flyToTree }) {
   const map     = useMap()
   const prevRef = useRef(null)
 
   useEffect(() => {
     if (!geojson?.features?.length || geojson === prevRef.current) return
     prevRef.current = geojson
-
-    // Calcul de l'emprise (Bounding Box) de toutes les données
-    const bbox = turf.bbox(geojson) // [minLng, minLat, maxLng, maxLat]
-
-    // Conversion au format Leaflet : [[Sud, Ouest], [Nord, Est]]
-    const bounds = [
-      [bbox[1], bbox[0]],
-      [bbox[3], bbox[2]],
-    ]
-
+    if (flyToTree) return  // zoom arbre du catalogue a priorité sur flyToBounds
+    const bbox   = turf.bbox(geojson)
+    const bounds = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]]
     map.flyToBounds(bounds, { padding: [40, 40], duration: 1.5 })
-  }, [geojson, map])
+  }, [geojson, map, flyToTree])
+
+  useEffect(() => {
+    if (!flyToTree) return
+    map.flyTo([flyToTree.lat, flyToTree.lng], 19, { duration: 1.2 })
+  }, [flyToTree, map])
 
   return null
 }
@@ -187,7 +190,7 @@ function TreePopup({ p, color, history, yieldKg = null }) {
   const hasHistory = Array.isArray(history) && history.length >= 2
 
   return (
-    <Popup className="tree-popup-wrapper" minWidth={260}>
+    <Popup className="tree-popup-wrapper" minWidth={310}>
       <div className="custom-popup">
 
         {/* ── En-tête ── */}
@@ -208,7 +211,7 @@ function TreePopup({ p, color, history, yieldKg = null }) {
           </div>
         )}
 
-        {/* ── Grille 3 colonnes ── */}
+        {/* ── Grille 4 colonnes ── */}
         <div className="popup-grid">
           <div className="popup-cell">
             <span className="popup-cell-icon"><LuThermometer size={16} /></span>
@@ -226,6 +229,13 @@ function TreePopup({ p, color, history, yieldKg = null }) {
             <span className="popup-cell-icon"><LuDroplet size={16} /></span>
             <span className="popup-cell-label">CWSI</span>
             <span className="popup-cell-value" style={{ color }}>{p.cwsi?.toFixed(3) ?? '—'}</span>
+          </div>
+          <div className="popup-cell">
+            <span className="popup-cell-icon"><LuRuler size={16} /></span>
+            <span className="popup-cell-label">Circonf.</span>
+            <span className="popup-cell-value">
+              {p.circonf != null ? <>{p.circonf.toFixed(2)}<small>m</small></> : '—'}
+            </span>
           </div>
         </div>
 
@@ -337,13 +347,13 @@ const MAP_FILTER_LABELS = {
 /**
  * Retourne true si l'arbre doit être atténué (non conforme au filtre IA actif).
  * @param {object} p               - feature.properties
- * @param {object|null} mapFilter  - { action:'filter', type:string } | null
+ * @param {object|null} mapFilter  - { action: string } | null
  * @param {object|null} yieldPred  - dict { id → rendement_kg }
  * @param {number|null} yieldAvg   - moyenne globale du rendement (pré-calculée)
  */
 function isFilteredOut(p, mapFilter, yieldPred, yieldAvg) {
-  if (!mapFilter || mapFilter.action !== 'filter') return false
-  switch (mapFilter.type) {
+  if (!mapFilter || mapFilter.action === 'reset') return false
+  switch (mapFilter.action) {
     case 'stress_severe':    return p.stress !== 'severe'
     case 'stress_critique':  return !['eleve', 'severe'].includes(p.stress)
     case 'stress_eleve':     return p.stress !== 'eleve'
@@ -384,6 +394,87 @@ function hexbinStyleFn(feature) {
   }
 }
 
+/**
+ * Toolbar de dessin personnalisée — remplace visuellement les contrôles leaflet-draw.
+ * Les boutons déclenchent programmatiquement les handlers cachés de leaflet-draw.
+ */
+function MapDrawToolbar({ mapRef, geojson }) {
+  const [activeTool, setActiveTool] = useState(null)
+
+  // Écoute les événements draw pour synchroniser l'état actif
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const onStop    = () => setActiveTool(null)
+    const onEditSt  = () => setActiveTool('edit')
+    const onDelSt   = () => setActiveTool('delete')
+    map.on('draw:drawstop',   onStop)
+    map.on('draw:editstart',  onEditSt)
+    map.on('draw:editstop',   onStop)
+    map.on('draw:deletestart',onDelSt)
+    map.on('draw:deletestop', onStop)
+    return () => {
+      map.off('draw:drawstop',   onStop)
+      map.off('draw:editstart',  onEditSt)
+      map.off('draw:editstop',   onStop)
+      map.off('draw:deletestart',onDelSt)
+      map.off('draw:deletestop', onStop)
+    }
+  }, [mapRef])
+
+  function trigger(cssClass, toolId) {
+    const btn = document.querySelector(`.${cssClass}`)
+    if (!btn) return
+    setActiveTool(prev => (prev === toolId ? null : toolId))
+    btn.click()
+  }
+
+  function recenter() {
+    if (!geojson?.features?.length || !mapRef.current) return
+    const bbox = turf.bbox(geojson)
+    mapRef.current.flyToBounds([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], { padding: [40, 40], duration: 1 })
+  }
+
+  const T = ({ icon, title, cls, toolId }) => (
+    <button
+      className={`mdt-btn${activeTool === toolId ? ' active' : ''}`}
+      title={title}
+      onClick={() => toolId ? trigger(cls, toolId) : undefined}
+    >
+      {icon}
+    </button>
+  )
+
+  return (
+    <div className="mdt-toolbar">
+      {/* Navigation */}
+      <div className="mdt-group">
+        <button className="mdt-btn" title="Zoom avant"   onClick={() => mapRef.current?.zoomIn()}><LuZoomIn  size={16} /></button>
+        <button className="mdt-btn" title="Zoom arrière" onClick={() => mapRef.current?.zoomOut()}><LuZoomOut size={16} /></button>
+        <button className="mdt-btn" title="Recentrer sur la parcelle" onClick={recenter}><LuLocate size={16} /></button>
+      </div>
+
+      <div className="mdt-divider" />
+
+      {/* Dessin */}
+      <div className="mdt-group">
+        <T icon={<LuPentagon size={16} />} title="Polygone libre"   cls="leaflet-draw-draw-polygon"   toolId="polygon"   />
+        <T icon={<LuSquare   size={16} />} title="Rectangle"        cls="leaflet-draw-draw-rectangle"  toolId="rectangle" />
+        <T icon={<LuMapPin   size={16} />} title="Point / Marqueur" cls="leaflet-draw-draw-marker"     toolId="marker"    />
+      </div>
+
+      <div className="mdt-divider" />
+
+      {/* Édition */}
+      <div className="mdt-group">
+        <T icon={<LuPencil size={16} />} title="Éditer la sélection"    cls="leaflet-draw-edit-edit"   toolId="edit"   />
+        <T icon={<LuTrash2 size={16} />} title="Supprimer la sélection" cls="leaflet-draw-edit-remove" toolId="delete" />
+      </div>
+    </div>
+  )
+}
+
+
 export default function TreeMap({
   geojson,
   activeStress = ['aucun', 'faible', 'modere', 'eleve', 'severe'],
@@ -398,7 +489,9 @@ export default function TreeMap({
   setSelectedTrees = null,
   selectedTrees = null,
   showIDW = false,
-  showRoute = false,
+  showRoute     = false,
+  routeTarget   = 'severe_eleve',
+  routeMaxTrees = 50,
   showMCDA = false,
   mcdaScores = {},
   showSectors = false,
@@ -406,14 +499,15 @@ export default function TreeMap({
   hotspotRadius = 15,
   idwResolution = 10,
   sectorCount   = 3,
+  sectorAngle   = 0,
   // ── filtres cross-critères ──────────────────────────
   dataRanges    = { hauteur: [0, 20], temp: [0, 60], cwsi: [0, 1] },
   filterHauteur = null,
-  filterTemp    = null,
   filterCwsi    = null,
+  filterCirc    = null,
   onHauteurChange = () => {},
-  onTempChange    = () => {},
   onCwsiChange    = () => {},
+  onCircChange    = () => {},
   onFilterReset   = () => {},
   totalCount    = 0,
   // ── anomalies ───────────────────────────────────────
@@ -427,6 +521,8 @@ export default function TreeMap({
   // ── filtre IA carte ──────────────────────────────────
   mapFilter        = null,
   onMapFilterReset = () => {},
+  // ── zoom depuis le catalogue ─────────────────────────
+  flyToTree        = null,
 }) {
   const compareId = compareMission?.id ?? null
 
@@ -469,6 +565,19 @@ export default function TreeMap({
     iconAnchor: [12, 12],
   }), [])
 
+  const depotIcon = useMemo(() => L.divIcon({
+    className: '',
+    html: `<div style="
+      width:30px;height:30px;border-radius:50%;
+      background:#f39c12;border:3px solid white;
+      box-shadow:0 2px 10px rgba(0,0,0,0.4);
+      display:flex;align-items:center;justify-content:center;
+      font-size:15px;cursor:grab;
+    ">🏠</div>`,
+    iconSize:   [30, 30],
+    iconAnchor: [15, 15],
+  }), [])
+
   // Cache de l'historique : { [treeId]: data[] }
   const historyCache = useRef({})
   const [, forceUpdate] = useState(0)
@@ -488,6 +597,7 @@ export default function TreeMap({
   // Résultats géospatiaux issus du worker (remplacent les anciens useMemo)
   const [idwGrid,        setIdwGrid]        = useState(null)
   const [routeResult,    setRouteResult]    = useState(null)
+  const [routeStart,     setRouteStart]     = useState(null)   // [lng, lat] dépôt
   const [sectorPolygons, setSectorPolygons] = useState(null)
   const [hexbinGrid,     setHexbinGrid]     = useState(null)
   // Ensemble des calculs en cours — alimente l'overlay "Calcul spatial en cours…"
@@ -496,6 +606,20 @@ export default function TreeMap({
   // ── Vue 3D Deck.gl ────────────────────────────────────────────────────────
   const [show3D,            setShow3D]            = useState(false)
   const [deck3DInitialState, setDeck3DInitialState] = useState(null)
+
+  // ── Gestion des couches (LayerDrawer) ─────────────────────────────────────
+  const [activeBasemap,    setActiveBasemap]    = useState('satellite')
+  const [activeOverlays,   setActiveOverlays]   = useState(['polygones'])
+  const [overlayOpacities, setOverlayOpacities] = useState({ rgb: 1, thermal: 1 })
+
+  function toggleOverlay(id) {
+    setActiveOverlays(prev =>
+      prev.includes(id) ? prev.filter(o => o !== id) : [...prev, id]
+    )
+  }
+  function setOpacity(id, val) {
+    setOverlayOpacities(prev => ({ ...prev, [id]: val }))
+  }
 
   function handle3DToggle() {
     if (show3D) { setShow3D(false); return }
@@ -561,8 +685,8 @@ export default function TreeMap({
     }
     const reqId = ++latestReqId.current.KMEANS
     setPendingCalcs(s => new Set(s).add('KMEANS'))
-    workerRef.current?.postMessage({ type: 'KMEANS', payload: { geojson, activeStress, sectorCount }, reqId })
-  }, [showSectors, geojson, activeStress, sectorCount])
+    workerRef.current?.postMessage({ type: 'KMEANS', payload: { geojson, activeStress, sectorCount, sectorAngle }, reqId })
+  }, [showSectors, geojson, activeStress, sectorCount, sectorAngle])
 
   // Déclenche le calcul hexbin dans le worker.
   useEffect(() => {
@@ -577,18 +701,50 @@ export default function TreeMap({
     workerRef.current?.postMessage({ type: 'HEXBIN', payload: { geojson }, reqId })
   }, [showHexbins, geojson])
 
-  // Déclenche le calcul TSP (Nearest Neighbor) dans le worker.
+  // Initialise / réinitialise le point de départ (dépôt) au centre de la parcelle.
   useEffect(() => {
-    if (!showRoute || !geojson?.features?.length) {
+    if (!showRoute) { setRouteStart(null); return }
+    if (!geojson?.features?.length) return
+    setRouteStart(prev => {
+      if (prev) return prev   // conserver le dépôt si l'utilisateur l'a déjà déplacé
+      const bbox = turf.bbox(geojson)
+      return [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
+    })
+  }, [showRoute, geojson])
+
+  // Déclenche le calcul VRP (Manhattan NN) dans le worker.
+  useEffect(() => {
+    if (!showRoute || !geojson?.features?.length || !routeStart) {
       latestReqId.current.TSP++
       setRouteResult(null)
       setPendingCalcs(s => { const n = new Set(s); n.delete('TSP'); return n })
       return
     }
+
+    // Filtre les features selon la cible choisie
+    let targetFeatures
+    if (routeTarget === 'severe') {
+      targetFeatures = geojson.features.filter(f => f.properties.stress === 'severe')
+    } else if (routeTarget === 'severe_eleve') {
+      targetFeatures = geojson.features.filter(f => ['severe', 'eleve'].includes(f.properties.stress))
+    } else {
+      targetFeatures = geojson.features   // 'all' — déjà filtré en amont par App.jsx
+    }
+
+    if (targetFeatures.length === 0) { setRouteResult(null); return }
+
     const reqId = ++latestReqId.current.TSP
     setPendingCalcs(s => new Set(s).add('TSP'))
-    workerRef.current?.postMessage({ type: 'TSP', payload: { geojson }, reqId })
-  }, [showRoute, geojson])
+    workerRef.current?.postMessage({
+      type: 'TSP',
+      payload: {
+        geojson:  { ...geojson, features: targetFeatures },
+        startPos: routeStart,
+        maxTrees: routeMaxTrees,
+      },
+      reqId,
+    })
+  }, [showRoute, geojson, routeTarget, routeMaxTrees, routeStart])
 
   const fetchHistory = useCallback((treeId) => {
     if (treeId == null || historyCache.current[treeId]) return
@@ -792,9 +948,10 @@ export default function TreeMap({
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}
         maxZoom={24}
+        zoomControl={false}
         style={{ height: '100%', width: '100%' }}
       >
-        <MapController geojson={geojson} />
+        <MapController geojson={geojson} flyToTree={flyToTree} />
         <DrawControl allFeatures={geojson?.features ?? []} setSelectedTrees={setSelectedTrees} />
 
 
@@ -805,82 +962,54 @@ export default function TreeMap({
           </>
         )}
 
-        <LayersControl position="topright">
+        {/* ── Fond de carte actif ── */}
+        <TileLayer
+          key={activeBasemap}
+          url={BASEMAPS[activeBasemap].url}
+          maxZoom={24}
+          maxNativeZoom={BASEMAPS[activeBasemap].maxNativeZoom}
+          attribution={BASEMAPS[activeBasemap].attribution}
+        />
 
-          {/* ── Fonds de carte ── */}
-          <LayersControl.BaseLayer checked name="Satellite (Esri)">
-            <TileLayer
-              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-              maxZoom={24} maxNativeZoom={18}
-              attribution="&copy; Esri"
-            />
-          </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer name="Mode Sombre (CartoDB)">
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              maxZoom={24} maxNativeZoom={20}
-              attribution="&copy; CARTO"
-            />
-          </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer name="OpenStreetMap">
-            <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              maxZoom={24} maxNativeZoom={19}
-              attribution="&copy; OSM"
-            />
-          </LayersControl.BaseLayer>
+        {/* ── Orthomosaïque RGB — mission courante ── */}
+        {currentId && currentMission?.ortho_formats?.rgb === 'zip' && activeOverlays.includes('rgb') && (
+          <TileLayer
+            url={`http://localhost:8000/tiles/${currentId}/rgb_tiles/{z}/{x}/{y}.png`}
+            maxZoom={24} maxNativeZoom={20} opacity={overlayOpacities.rgb ?? 1}
+            pane={isCompareMode ? 'left-pane' : 'overlayPane'}
+          />
+        )}
 
-          {/* ── Orthomosaïque RGB (ZIP tuiles) — mission courante ── */}
-          {currentId && currentMission?.ortho_formats?.rgb === 'zip' && (
-            <LayersControl.Overlay checked name="Orthomosaïque RGB">
-              <TileLayer
-                url={`http://localhost:8000/tiles/${currentId}/rgb_tiles/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20}
-                pane={isCompareMode ? 'left-pane' : 'overlayPane'}
-              />
-            </LayersControl.Overlay>
-          )}
+        {/* ── Orthomosaïque Thermique — mission courante ── */}
+        {currentId && currentMission?.has_thermal_zip && activeOverlays.includes('thermal') && (
+          <TileLayer
+            url={`http://localhost:8000/tiles/${currentId}/thermal/{z}/{x}/{y}.png`}
+            maxZoom={24} maxNativeZoom={20} opacity={overlayOpacities.thermal ?? 1}
+            pane={isCompareMode ? 'left-pane' : 'overlayPane'}
+          />
+        )}
 
-          {/* ── Orthomosaïque Thermique (ZIP tuiles) — mission courante ── */}
-          {currentId && currentMission?.has_thermal_zip && (
-            <LayersControl.Overlay checked name="Orthomosaïque Thermique">
-              <TileLayer
-                url={`http://localhost:8000/tiles/${currentId}/thermal/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20} opacity={1}
-                pane={isCompareMode ? 'left-pane' : 'overlayPane'}
-              />
-            </LayersControl.Overlay>
-          )}
+        {/* ── Orthomosaïques mission comparée ── */}
+        {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'zip' && (
+          <TileLayer
+            url={`http://localhost:8000/tiles/${compareId}/rgb_tiles/{z}/{x}/{y}.png`}
+            maxZoom={24} maxNativeZoom={20} pane="right-pane"
+          />
+        )}
+        {isCompareMode && compareId && compareMission?.has_thermal_zip && (
+          <TileLayer
+            url={`http://localhost:8000/tiles/${compareId}/thermal/{z}/{x}/{y}.png`}
+            maxZoom={24} maxNativeZoom={20} opacity={1} pane="right-pane"
+          />
+        )}
 
-          {/* ── Orthomosaïques — mission comparée (right-pane uniquement) ── */}
-          {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'zip' && (
-            <LayersControl.Overlay checked name="Ortho RGB (comparaison)">
-              <TileLayer
-                url={`http://localhost:8000/tiles/${compareId}/rgb_tiles/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20} pane="right-pane"
-              />
-            </LayersControl.Overlay>
-          )}
-          {isCompareMode && compareId && compareMission?.has_thermal_zip && (
-            <LayersControl.Overlay checked name="Ortho Thermique (comparaison)">
-              <TileLayer
-                url={`http://localhost:8000/tiles/${compareId}/thermal/{z}/{x}/{y}.png`}
-                maxZoom={24} maxNativeZoom={20} opacity={1} pane="right-pane"
-              />
-            </LayersControl.Overlay>
-          )}
-
-          {/* ── Parcelles d'Oliviers — source unique, strictement isolée ── */}
-          {geojson && (
-            <LayersControl.Overlay checked name="Parcelles d'Oliviers">
-              <LayerGroup>
-                {renderMarkers(visibleFeatures, isCompareMode ? 'left-pane' : 'markerPane', true)}
-                {isCompareMode && renderMarkers(visibleCompareFeatures, 'right-pane', false)}
-              </LayerGroup>
-            </LayersControl.Overlay>
-          )}
-
-        </LayersControl>
+        {/* ── Polygones oliviers ── */}
+        {geojson && activeOverlays.includes('polygones') && (
+          <LayerGroup>
+            {renderMarkers(visibleFeatures, isCompareMode ? 'left-pane' : 'markerPane', true)}
+            {isCompareMode && renderMarkers(visibleCompareFeatures, 'right-pane', false)}
+          </LayerGroup>
+        )}
 
         {/* ── Hexbin : z405, entre ortho et secteurs ── */}
         <Pane name="hexbin-pane" style={{ zIndex: 405 }} />
@@ -929,31 +1058,41 @@ export default function TreeMap({
         {/* ── Tournée d'inspection : z470, au-dessus des hotspots, sous les markers ── */}
         <Pane name="route-pane" style={{ zIndex: 470 }} />
         {routeResult && (
-          <>
-            <GeoJSON
-              key={`route-${routeResult.count}-${geojson?.features?.length ?? 0}`}
-              data={routeResult.line}
-              style={{ color: '#f39c12', weight: 4, dashArray: '8, 8', opacity: 0.9 }}
-              pane="route-pane"
-            />
-            <CircleMarker
-              center={[routeResult.start[1], routeResult.start[0]]}
-              radius={10}
-              pathOptions={{ color: '#e74c3c', weight: 2.5, fillColor: 'white', fillOpacity: 1 }}
-              pane="route-pane"
-            >
-              <Popup className="tree-popup-wrapper" minWidth={140}>
-                <div className="custom-popup">
-                  <div className="popup-header">
-                    <span className="popup-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><LuFootprints size={16} /> Départ tournée</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: '#94a3b8', padding: '4px 0' }}>
-                    {routeResult.count} arbre{routeResult.count !== 1 ? 's' : ''} sévères à inspecter
-                  </div>
+          <GeoJSON
+            key={`route-${routeResult.count}-${geojson?.features?.length ?? 0}`}
+            data={routeResult.line}
+            style={{ color: '#f39c12', weight: 4, dashArray: '8, 8', opacity: 0.9 }}
+            pane="route-pane"
+          />
+        )}
+
+        {/* ── Dépôt déplaçable (point de départ tournée) ── */}
+        {showRoute && routeStart && (
+          <Marker
+            position={[routeStart[1], routeStart[0]]}
+            draggable={true}
+            icon={depotIcon}
+            eventHandlers={{
+              dragend: (e) => {
+                const ll = e.target.getLatLng()
+                setRouteStart([ll.lng, ll.lat])
+              },
+            }}
+          >
+            <Popup className="tree-popup-wrapper" minWidth={170}>
+              <div className="custom-popup">
+                <div className="popup-header">
+                  <span className="popup-title">🏠 Dépôt de départ</span>
                 </div>
-              </Popup>
-            </CircleMarker>
-          </>
+                <div style={{ fontSize: 11, color: '#94a3b8', padding: '4px 0' }}>
+                  Faites glisser pour repositionner
+                  {routeResult && (
+                    <><br />{routeResult.count} arbre{routeResult.count !== 1 ? 's' : ''} dans la tournée</>
+                  )}
+                </div>
+              </div>
+            </Popup>
+          </Marker>
         )}
 
         {/* ── Anomalies : z650, au-dessus de tous les markers (z600) ── */}
@@ -1013,6 +1152,35 @@ export default function TreeMap({
 
       </MapContainer>
 
+      {/* ── Toolbar dessin custom ── */}
+      <MapDrawToolbar mapRef={mapRef} geojson={geojson} />
+
+      {/* ── LayerDrawer — coin supérieur droit ── */}
+      {(() => {
+        const availableOverlays = [
+          { id: 'polygones', label: "Polygones oliviers", icon: <LuTreePine size={13} />, color: '#22c55e', hasOpacity: false },
+          ...(currentId && currentMission?.ortho_formats?.rgb === 'zip'
+            ? [{ id: 'rgb', label: 'Orthomosaïque RGB', icon: <LuSatellite size={13} />, color: '#0ea5e9', hasOpacity: true }]
+            : []),
+          ...(currentId && currentMission?.has_thermal_zip
+            ? [{ id: 'thermal', label: 'Raster thermique', icon: <LuThermIcon size={13} />, color: '#f97316', hasOpacity: true }]
+            : []),
+        ]
+        return (
+          <div className="map-layer-drawer-wrap">
+            <LayerDrawer
+              activeBasemap={activeBasemap}
+              onBasemapChange={setActiveBasemap}
+              activeOverlays={activeOverlays}
+              onOverlayToggle={toggleOverlay}
+              overlayOpacities={overlayOpacities}
+              onOpacityChange={setOpacity}
+              availableOverlays={availableOverlays}
+            />
+          </div>
+        )
+      })()}
+
       {/* ── Bouton Vue 3D — coin inférieur gauche, au-dessus du bouton anomalie ── */}
       {geojson?.features?.length > 0 && (
         <button
@@ -1037,28 +1205,12 @@ export default function TreeMap({
         }
       </button>
 
-      {/* ── Overlay filtres cross-critères — coin supérieur droit ── */}
-      {totalCount > 0 && (
-        <MapFilterOverlay
-          dataRanges={dataRanges}
-          filterHauteur={filterHauteur}
-          filterTemp={filterTemp}
-          filterCwsi={filterCwsi}
-          onHauteurChange={onHauteurChange}
-          onTempChange={onTempChange}
-          onCwsiChange={onCwsiChange}
-          onReset={onFilterReset}
-          filteredCount={geojson?.features?.length ?? 0}
-          totalCount={totalCount}
-        />
-      )}
-
       {/* ── Badge filtre IA — centré en haut de carte ── */}
-      {mapFilter?.action === 'filter' && (
+      {mapFilter && mapFilter.action !== 'reset' && (
         <div className="map-ai-filter-badge">
           <span className="map-ai-filter-badge__icon">🤖</span>
           <span className="map-ai-filter-badge__label">
-            Filtre IA · {MAP_FILTER_LABELS[mapFilter.type] ?? mapFilter.type}
+            Filtre IA · {MAP_FILTER_LABELS[mapFilter.action] ?? mapFilter.action}
           </span>
           <button
             className="map-ai-filter-badge__reset"

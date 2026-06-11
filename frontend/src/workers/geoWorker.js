@@ -7,8 +7,8 @@
  *
  * Protocole de messages (→ = envoyé au worker, ← = reçu du worker) :
  *   → { type: 'IDW',    payload: { geojson, idwResolution },              reqId: number }
- *   → { type: 'KMEANS', payload: { geojson, activeStress, sectorCount }, reqId: number }
- *   → { type: 'TSP',    payload: { geojson },                            reqId: number }
+ *   → { type: 'KMEANS', payload: { geojson, activeStress, sectorCount, sectorAngle }, reqId: number }
+ *   → { type: 'TSP',    payload: { geojson, startPos, maxTrees },         reqId: number }
  *   → { type: 'HEXBIN', payload: { geojson },                            reqId: number }
  *   ← { type: 'IDW_RESULT',    result: FeatureCollection | null, reqId }
  *   ← { type: 'KMEANS_RESULT', result: FeatureCollection | null, reqId }
@@ -49,35 +49,64 @@ function computeIDW(geojson, resolution) {
   }
 }
 
-// ── 2. Clustering K-Means — 3 secteurs d'irrigation homogènes ───────────────
-//    Partitionne les arbres visibles en 3 clusters spatiaux.
-//    Retourne une FeatureCollection de polygones convexes bufférisés (5 m).
-function computeKMeans(geojson, activeStress, sectorCount) {
-  const filtered = geojson.features.filter(
-    f => activeStress.includes(f.properties.stress || 'inconnu')
-  )
+// ── 2. Sectorisation par bandes orientées — découpage agronomique ────────────
+//    Regroupe les arbres en bandes parallèles aux rangées de goutte-à-goutte.
+//    Algorithme :
+//      1) Centroïde global de tous les arbres filtrés par stress.
+//      2) turf.transformRotate pivote chaque point de -sectorAngle° autour du centroïde.
+//      3) Lecture de la coordonnée Y (latitude) pivotée → étendue [minY, maxY].
+//      4) Découpe en sectorCount bandes de largeur égale sur cet axe Y pivoté.
+//      5) Enveloppe convexe (+ buffer 5 m) sur les coordonnées ORIGINALES → polygones.
+//    Retourne une FeatureCollection de polygones colorés par cluster_id.
+function computeBandSectors(geojson, activeStress, sectorCount, sectorAngle) {
+  // Garde défensive : si activeStress manque/null, on inclut tous les arbres
+  const filtered = Array.isArray(activeStress)
+    ? geojson.features.filter(f => activeStress.includes(f.properties.stress || 'inconnu'))
+    : geojson.features
+
   if (filtered.length < sectorCount) return null
 
-  const points = turf.featureCollection(
-    filtered.map(f => {
-      const pt = turf.centroid(f)
-      pt.properties = { ...f.properties }
-      return pt
-    })
-  )
+  // Centroïdes des arbres filtrés — toujours des Points, même si les features sont des Polygones
+  const pts = filtered.map(f => {
+    const pt = turf.centroid(f)
+    pt.properties = { ...f.properties }
+    return pt
+  })
 
-  let clustered
-  try {
-    clustered = turf.clustersKmeans(points, { numberOfClusters: sectorCount })
-  } catch {
-    return null
-  }
+  // Forçage numérique — postMessage sérialise en JSON, un string passerait sinon
+  const angle = Number(sectorAngle) || 0
 
+  // Pivot = [lng, lat] pur — turf.transformRotate n'accepte pas un Feature comme pivot
+  const pivotCoords = turf.centroid(turf.featureCollection(pts)).geometry.coordinates
+
+  // Rotation de chaque centroïde Point : .geometry.coordinates[1] est toujours un nombre
+  const rotatedWithOrig = pts.map(pt => ({
+    original: pt,
+    ry: turf.transformRotate(pt, -angle, { pivot: pivotCoords }).geometry.coordinates[1],
+  }))
+
+  // Étendue Y pivotée → sectorCount bandes de hauteur égale
+  let minY = Infinity, maxY = -Infinity
+  rotatedWithOrig.forEach(({ ry }) => {
+    if (ry < minY) minY = ry
+    if (ry > maxY) maxY = ry
+  })
+  if (maxY === minY) maxY = minY + 0.0001  // évite division par zéro si tous colinéaires
+
+  const bandH   = (maxY - minY) / sectorCount
+  const buckets = Array.from({ length: sectorCount }, () => [])
+
+  rotatedWithOrig.forEach(({ original, ry }) => {
+    let idx = Math.floor((ry - minY) / bandH)
+    if (idx >= sectorCount) idx = sectorCount - 1
+    if (idx < 0)            idx = 0
+    buckets[idx].push(original)
+  })
+
+  // Polygones d'enveloppe convexe sur coordonnées originales (non pivotées)
   const polygons = []
   for (let i = 0; i < sectorCount; i++) {
-    const clusterPts = turf.featureCollection(
-      clustered.features.filter(f => f.properties.cluster === i)
-    )
+    const clusterPts = turf.featureCollection(buckets[i])
     if (clusterPts.features.length < 3) continue
 
     const hull     = turf.convex(clusterPts)
@@ -92,39 +121,55 @@ function computeKMeans(geojson, activeStress, sectorCount) {
   return polygons.length > 0 ? turf.featureCollection(polygons) : null
 }
 
-// ── 3. TSP Nearest Neighbor — tournée d'inspection des arbres sévères ────────
-//    Algorithme glouton O(n²) : à chaque étape, on va vers l'arbre non visité
-//    le plus proche du dernier arbre visité. Retourne la polyligne de la tournée,
-//    le point de départ (pour le marqueur Leaflet) et le nombre d'arbres inclus.
-function computeTSP(geojson) {
-  const severe = geojson.features.filter(f => f.properties.stress === 'severe')
-  if (severe.length < 2) return null
+// ── 3. VRP Nearest Neighbor — tournée sous contraintes (Manhattan + dépôt) ───
+//    • startPos  : [lng, lat] point de départ imposé (dépôt) — null = 1er arbre
+//    • maxTrees  : quota maximum d'arbres à visiter (simule une limite de temps)
+//    • Distance  : Manhattan absolue sur coordonnées géo (déplacement en allées)
+//    Les features sont déjà filtrées par l'appelant (cible : sévère, élevé, tous…)
+function computeTSP(geojson, startPos = null, maxTrees = null) {
+  const features = geojson.features
+  if (features.length < 1) return null
 
-  const pts = severe.map(f => {
+  // Centroïdes de chaque arbre cible
+  const pts = features.map(f => {
     const pt = turf.centroid(f)
     pt.properties = { ...f.properties }
     return pt
   })
 
-  let unvisited = [...pts]
-  let current   = unvisited.shift()
-  const ordered = [current]
-
-  while (unvisited.length > 0) {
-    const nearest = turf.nearestPoint(current, turf.featureCollection(unvisited))
-    ordered.push(nearest)
-    const idx = unvisited.findIndex(
-      p => p.geometry.coordinates[0] === nearest.geometry.coordinates[0] &&
-           p.geometry.coordinates[1] === nearest.geometry.coordinates[1]
-    )
-    unvisited.splice(idx, 1)
-    current = nearest
+  // Distance Manhattan sur coordonnées projetées (lat/lng ≈ équivalent local)
+  function manhattan([ax, ay], [bx, by]) {
+    return Math.abs(bx - ax) + Math.abs(by - ay)
   }
 
-  const coords = ordered.map(p => p.geometry.coordinates)
+  const limit     = maxTrees != null ? Math.min(maxTrees, pts.length) : pts.length
+  let currentCoord = startPos ?? pts[0].geometry.coordinates
+  let unvisited    = startPos ? [...pts] : pts.slice(1)
+  const ordered    = startPos ? [] : [pts[0]]
+
+  while (unvisited.length > 0 && ordered.length < limit) {
+    let bestIdx  = 0
+    let bestDist = manhattan(currentCoord, unvisited[0].geometry.coordinates)
+
+    for (let i = 1; i < unvisited.length; i++) {
+      const d = manhattan(currentCoord, unvisited[i].geometry.coordinates)
+      if (d < bestDist) { bestDist = d; bestIdx = i }
+    }
+
+    const nearest = unvisited[bestIdx]
+    ordered.push(nearest)
+    unvisited.splice(bestIdx, 1)
+    currentCoord = nearest.geometry.coordinates
+  }
+
+  if (ordered.length === 0) return null
+
+  const treeCoords = ordered.map(p => p.geometry.coordinates)
+  const allCoords  = startPos ? [startPos, ...treeCoords] : treeCoords
+
   return {
-    line:  turf.lineString(coords),
-    start: coords[0],
+    line:  turf.lineString(allCoords),
+    start: allCoords[0],
     count: ordered.length,
   }
 }
@@ -180,10 +225,10 @@ self.onmessage = function (e) {
         self.postMessage({ type: 'IDW_RESULT',    result: computeIDW(payload.geojson, payload.idwResolution ?? 10), reqId })
         break
       case 'KMEANS':
-        self.postMessage({ type: 'KMEANS_RESULT', result: computeKMeans(payload.geojson, payload.activeStress, payload.sectorCount ?? 3), reqId })
+        self.postMessage({ type: 'KMEANS_RESULT', result: computeBandSectors(payload.geojson, payload.activeStress, payload.sectorCount ?? 3, payload.sectorAngle ?? 0), reqId })
         break
       case 'TSP':
-        self.postMessage({ type: 'TSP_RESULT',    result: computeTSP(payload.geojson), reqId })
+        self.postMessage({ type: 'TSP_RESULT',    result: computeTSP(payload.geojson, payload.startPos ?? null, payload.maxTrees ?? null), reqId })
         break
       case 'HEXBIN':
         self.postMessage({ type: 'HEXBIN_RESULT', result: computeHexbin(payload.geojson), reqId })

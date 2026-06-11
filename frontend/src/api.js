@@ -140,6 +140,25 @@ export async function fetchAnomalies(missionId) {
   return d
 }
 
+export async function fetchYieldPredictionsAll(missionId) {
+  const r = await fetch(`${API}/api/missions/${missionId}/yield-predictions`)
+  const d = await r.json()
+  if (!r.ok) throw new Error(d.detail || 'Erreur prédiction rendement')
+  return d
+}
+
+/** GET /api/missions/{id}/rendement — prédictions + agrégats (singleton backend). */
+export async function fetchRendement(missionId) {
+  const r = await fetch(`${API}/api/missions/${missionId}/rendement`)
+  const d = await r.json()
+  if (!r.ok) throw new Error(
+    Array.isArray(d.detail)
+      ? d.detail.map(e => e.msg || JSON.stringify(e)).join(' · ')
+      : d.detail || 'Erreur prédiction rendement'
+  )
+  return d
+}
+
 export async function fetchYieldPredictions(missionId) {
   const r = await fetch(`${API}/api/missions/${missionId}/predict-yield`, {
     method: 'POST',

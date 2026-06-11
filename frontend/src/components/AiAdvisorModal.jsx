@@ -29,8 +29,7 @@ const ACTION_BADGE_LABELS = {
 
 function getActionBadge(action) {
   if (!action) return null
-  if (action.action === 'reset') return ACTION_BADGE_LABELS.reset
-  return ACTION_BADGE_LABELS[action.type] ?? { icon: '🎯', label: 'Filtre appliqué' }
+  return ACTION_BADGE_LABELS[action.action] ?? { icon: '🎯', label: 'Filtre appliqué' }
 }
 
 // ── Smart suggestions — toujours visibles au-dessus du champ ─────────────────
