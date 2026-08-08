@@ -92,71 +92,71 @@ The dashboard is organized into six tabs: **Overview**, **Map**, **Report**, **C
 ### 1. Overview
 
 ![Overview](docs/images/dashboard_synthese.png)
-*Key indicators, stress distribution by class, mean CWSI trend across missions, and temperature–CWSI correlation*
+*The landing page of the dashboard. Four headline indicators — number of available missions, total trees mapped, global mean CWSI, and share of trees under high/severe stress — sit above four charts: a donut of trees by stress class, a stacked bar chart comparing class distribution across missions, a line chart tracking mean CWSI over time, and a scatter plot correlating canopy temperature with CWSI.*
 
 ![Weather panel](docs/images/dashboard_meteo.png)
-*Temperature, precipitation, relative humidity, and wind speed curves (Open-Meteo API), with estimated weekly ET₀*
+*A weather panel fed by the Open-Meteo API, since the plot has no permanent on-site weather station. It plots daily min/mean/max temperature and precipitation, relative humidity, and wind speed over the inter-mission period, plus a weekly table with estimated ET₀ — the same parameters that feed the FAO-56 water balance module.*
 
 ---
 
 ### 2. Map View
 
 ![Map view](docs/images/dashboard_vue_generale.png)
-*Olive trees colored by CWSI stress level, statistics panel, and cross-mission trend panel*
+*The core Leaflet map: every digitized olive tree polygon is colored by its CWSI stress class. A left-hand panel summarizes the selected mission's statistics, and a right-hand panel shows the cross-mission trend, making it easy to spot clusters of persistent stress from one flight to the next.*
 
 ![Tree detail card](docs/images/fig_dashboard_popup_arbre.png)
-*Leaf temperature, canopy height, CWSI value, and trunk circumference, with a stress-class badge*
+*Clicking a polygon opens this per-tree card: mean leaf temperature (°C), canopy height (m), CWSI value, and trunk circumference (cm), with a colored badge for the stress class — the same attributes extracted by zonal statistics in the processing pipeline.*
 
 ---
 
 ### 3. Mission Management
 
 ![Mission selector](docs/images/fig_dashboard_selecteur_mission.png)
-*Navigation between flight campaigns*
+*Lets the user switch between flight campaigns (Mission 1, Mission 2, etc.) without touching any code — the multi-mission architecture is designed so each new campaign just gets imported as new data.*
 
 ![Mission creation](docs/images/fig_dashboard_creation_mission.png)
-*Mission creation form with shapefile and orthomosaic import*
+*The form used to register a new mission: flight date, weather conditions, and import of the tree shapefile plus RGB/thermal orthomosaics generated from the photogrammetric processing.*
 
 ---
 
 ### 4. CWSI Settings
 
 ![CWSI calculation method](docs/images/fig_dashboard_calcul_cwsi.png)
-*Choice between the empirical method and the statistical CWSIsi method*
+*Toggle between the empirical CWSI formula and the statistical CWSIsi method (Bian et al., 2019), which estimates $T_{wet}$ and $T_{dry}$ from percentiles of the canopy temperature distribution instead of requiring ground weather stations.*
 
 ![Classification thresholds](docs/images/fig_dashboard_seuils_cwsi.png)
-*Five stress-class thresholds, configurable per mission with automatic recalculation*
+*The five stress-class thresholds (None / Low / Moderate / High / Severe) are editable per mission, with all maps and statistics recalculating automatically once a threshold is changed.*
 
 ---
 
 ### 5. Detailed Analytics
 
 ![Analytics module](docs/images/fig_dashboard_analyses_detaillees.png)
-*CWSI value distribution histogram and circumference/CWSI correlation scatter plot by stress class*
+*A histogram of CWSI values across all 968 trees in the ML dataset, alongside a scatter plot of trunk circumference against CWSI colored by stress class — used to check whether tree size relates to observed stress levels.*
 
 ---
 
 ### 6. FAO-56 Water Balance
 
 ![Water balance](docs/images/fig_dashboard_bilan_hydrique.png)
-*Agronomic parameters, 7-day water requirement forecast, and estimated irrigation budget in MAD*
+*Implements the FAO-56 Penman-Monteith method: the crop coefficient $K_c$ is chosen automatically by phenological stage and modulated by the mean CWSI, producing a 7-day irrigation-needs forecast (via Open-Meteo) together with an estimated water budget in MAD.*
 
 ---
 
 ### 7. Advanced Features
 
 ![Feature panel](docs/images/fig_dashboard_panneau_fonctionnalites.png)
-*Multi-criteria filtering, AI anomaly detection, IDW interpolation, hexagonal binning, optimized inspection routing, and plot sectorization*
+*A side panel bundling the dashboard's advanced spatial tools: multi-criteria filtering, AI-based anomaly detection (Isolation Forest), IDW interpolation for continuous stress surfaces, hexagonal binning for aggregated views, an optimized inspection route (VRP) for field visits, and plot sectorization for zone-level planning.*
 
 ---
 
 ### 8. AI Agronomist
 
 ![AI Agronomist interface](docs/images/fig_dashboard_agronome_ia.png)
-*Conversational assistant (Llama-3.3-70b via Groq API) answering in natural language using the active mission's agronomic data*
+*A conversational assistant powered by Llama-3.3-70b via the Groq API. Each query is answered with the active mission's agronomic data as context, so responses are grounded in the actual CWSI, weather, and yield figures rather than generic advice.*
 
 ![Automatic map filter](docs/images/fig_dashboard_filtre_stress_eleve.png)
-*Automatic spatial filter on trees under high and severe stress, triggered in response to an AI Agronomist query*
+*A distinctive capability: the assistant can trigger a spatial filter directly on the Leaflet map in response to a natural-language query — here, isolating trees under high and severe stress — linking textual diagnosis directly to spatial representation.*
 
 ---
 
