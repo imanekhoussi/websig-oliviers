@@ -24,7 +24,7 @@ const DIST_BINS = [
   { label: '15–20 kg', min: 15, max: 20 },
   { label: '20+ kg',   min: 20, max: Infinity },
 ]
-const DIST_COLORS = ['#ef4444', '#f97316', '#fbbf24', '#86efac', '#22c55e']
+const DIST_COLORS = ['#bf3226', '#c96e1c', '#a89520', '#86c9a0', '#3d9960']
 
 function ChartTooltip({ contentStyle, ...props }) {
   return (
@@ -242,8 +242,8 @@ export default function PredictiveAnalysis({
             {/* KPIs */}
             <div className="pa-kpis">
               <div className="pa-kpi">
-                <div className="pa-kpi-icon" style={{ background: 'rgba(34,197,94,.12)' }}>
-                  <LuLeaf size={18} style={{ color: '#22c55e' }} />
+                <div className="pa-kpi-icon" style={{ background: 'rgba(61,153,96,.12)' }}>
+                  <LuLeaf size={18} style={{ color: '#3d9960' }} />
                 </div>
                 <div>
                   <div className="pa-kpi-label">Rendement moyen</div>
@@ -267,8 +267,8 @@ export default function PredictiveAnalysis({
               </div>
 
               <div className="pa-kpi">
-                <div className="pa-kpi-icon" style={{ background: 'rgba(239,68,68,.12)' }}>
-                  <LuTriangleAlert size={18} style={{ color: '#ef4444' }} />
+                <div className="pa-kpi-icon" style={{ background: 'rgba(191,50,38,.12)' }}>
+                  <LuTriangleAlert size={18} style={{ color: '#bf3226' }} />
                 </div>
                 <div>
                   <div className="pa-kpi-label">Arbres &lt; 5 kg/arbre</div>
@@ -379,9 +379,9 @@ export default function PredictiveAnalysis({
                         <Area type="monotone" dataKey="baseline" stackId="band"
                           stroke="none" fill="transparent" legendType="none" />
                         <Area type="monotone" dataKey="range" stackId="band"
-                          stroke="none" fill="#22c55e" fillOpacity={0.15} legendType="none" />
-                        <Line type="monotone" dataKey="avg" stroke="#22c55e" strokeWidth={2}
-                          dot={{ r: 4, fill: '#22c55e' }} />
+                          stroke="none" fill="#3d9960" fillOpacity={0.15} legendType="none" />
+                        <Line type="monotone" dataKey="avg" stroke="#3d9960" strokeWidth={2}
+                          dot={{ r: 4, fill: '#3d9960' }} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   )}
@@ -416,7 +416,7 @@ export default function PredictiveAnalysis({
                         </div>
                         <span
                           className="pa-heatmap-avg"
-                          style={{ color: rowPct > 0.5 ? '#22c55e' : '#ef4444' }}
+                          style={{ color: rowPct > 0.5 ? '#3d9960' : '#bf3226' }}
                         >
                           {row.avg} kg
                         </span>

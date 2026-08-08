@@ -14,18 +14,18 @@ function TrendTooltip({ active, payload, label }) {
   const val = payload[0].value
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.97)',
+      background: 'rgba(15,23,42,0.97)',
       backdropFilter: 'blur(16px)',
       WebkitBackdropFilter: 'blur(16px)',
-      border: '1px solid rgba(203,213,225,0.8)',
+      border: '1px solid rgba(148,163,184,0.18)',
       borderRadius: 8,
       padding: '9px 13px',
       fontSize: 12,
-      color: '#0f172a',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+      color: '#f1f5f9',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.45)',
       lineHeight: 1.6,
     }}>
-      <div style={{ color: '#64748b', marginBottom: 3 }}>Mission : {label}</div>
+      <div style={{ color: '#94a3b8', marginBottom: 3 }}>Mission : {label}</div>
       <div>CWSI moyen : <b>{val != null ? val.toFixed(3) : '—'}</b></div>
     </div>
   )
@@ -177,18 +177,18 @@ export default function TrendPanel({ missions, currentId, geojson, onSelectMissi
               <Line
                 type="monotone"
                 dataKey="cwsi"
-                stroke="#38bdf8"
+                stroke="#4a7c59"
                 strokeWidth={2.5}
                 dot={({ cx, cy, payload }) => (
                   <circle
                     key={payload.id}
                     cx={cx} cy={cy} r={payload.id === currentId ? 6 : 4}
-                    fill={payload.id === currentId ? '#22c55e' : '#38bdf8'}
+                    fill={payload.id === currentId ? '#3d9960' : '#4a7c59'}
                     stroke="white" strokeWidth={payload.id === currentId ? 2.5 : 1.5}
                     style={{ cursor: 'pointer' }}
                   />
                 )}
-                activeDot={{ r: 7, fill: '#38bdf8', stroke: 'white', strokeWidth: 2 }}
+                activeDot={{ r: 7, fill: '#4a7c59', stroke: 'white', strokeWidth: 2 }}
                 connectNulls
               />
               {missionActive?.cwsi != null && (
@@ -196,7 +196,7 @@ export default function TrendPanel({ missions, currentId, geojson, onSelectMissi
                   x={missionActive.date}
                   y={missionActive.cwsi}
                   r={8}
-                  fill="#22c55e"
+                  fill="#3d9960"
                   stroke="white"
                   strokeWidth={2.5}
                 />
@@ -207,7 +207,7 @@ export default function TrendPanel({ missions, currentId, geojson, onSelectMissi
           {missionActive && (
             <div className="trend-current">
               <span className="trend-label">Mission sélectionnée</span>
-              <span className="trend-value" style={{ color: '#22c55e' }}>
+              <span className="trend-value" style={{ color: '#3d9960' }}>
                 CWSI {missionActive.cwsi?.toFixed(3) ?? '—'}
               </span>
             </div>
@@ -215,9 +215,9 @@ export default function TrendPanel({ missions, currentId, geojson, onSelectMissi
 
           {/* ── Légende + bouton archives climatiques ── */}
           <div className="trend-legend">
-            <span className="swatch" style={{ background: '#38bdf8' }} />
+            <span className="swatch" style={{ background: '#4a7c59' }} />
             <span>CWSI moyen</span>
-            <span className="swatch" style={{ background: '#22c55e', marginLeft: 12 }} />
+            <span className="swatch" style={{ background: '#3d9960', marginLeft: 12 }} />
             <span>Mission active</span>
 
             {/* Bouton + popover climatique — visible uniquement si ≥ 2 missions */}

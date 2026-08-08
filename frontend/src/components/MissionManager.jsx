@@ -17,11 +17,11 @@ const DEFAULT_THRESHOLDS = {
 }
 
 const THRESH_META = [
-  { key: 'aucun',  label: 'Aucun stress',  color: '#2ecc71' },
-  { key: 'faible', label: 'Stress faible',  color: '#f1c40f' },
-  { key: 'modere', label: 'Stress modéré',  color: '#e67e22' },
-  { key: 'eleve',  label: 'Stress élevé',   color: '#e74c3c' },
-  { key: 'severe', label: 'Stress sévère',  color: '#8e44ad' },
+  { key: 'aucun',  label: 'Aucun stress',  color: '#3d9960' },
+  { key: 'faible', label: 'Stress faible',  color: '#a89520' },
+  { key: 'modere', label: 'Stress modéré',  color: '#c96e1c' },
+  { key: 'eleve',  label: 'Stress élevé',   color: '#bf3226' },
+  { key: 'severe', label: 'Stress sévère',  color: '#7b3e97' },
 ]
 
 /* ── Panneau d'administration des missions ───────────────────────────────── */

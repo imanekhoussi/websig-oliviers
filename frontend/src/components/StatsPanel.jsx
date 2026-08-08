@@ -2,12 +2,16 @@ import { useState, useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Cell, CartesianGrid, LabelList,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis,
+  PolarRadiusAxis, Legend,
 } from 'recharts'
 import { STRESS_COLORS } from '../constants'
 // exportXlsxUrl / exportPdfUrl moved to ExportModal
 import { LuActivity, LuMapPin, LuThermometer, LuDroplet, LuWind, LuChartBar, LuChevronLeft, LuChevronRight, LuTrees } from 'react-icons/lu'
 import AnalyticsModal from './AnalyticsModal'
 import AiAdvisorModal from './AiAdvisorModal'
+import IrrigationSimulator from './IrrigationSimulator'
+import SummaryCard from './SummaryCard'
 // Note: export buttons removed — export is now in the ExportModal (navbar "Extraire")
 
 function cwsiColor(val) {
@@ -25,25 +29,73 @@ function cwsiBg(val) {
 
 const SHORT_STRESS = { aucun: 'Aucun', faible: 'Faible', modere: 'Modéré', eleve: 'Élevé', severe: 'Sévère', inconnu: '—' }
 
+function CompareRadar({ data, labelA, labelB }) {
+  if (!data?.length) return null
+  return (
+    <div className="compare-radar-wrap">
+      <h4 className="compare-radar-title">Comparaison multidimensionnelle</h4>
+      <p className="compare-radar-sub">Score 0–100 · plus haut = meilleur état</p>
+      <ResponsiveContainer width="100%" height={240}>
+        <RadarChart data={data} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+          <PolarGrid stroke="rgba(148,163,184,0.2)" />
+          <PolarAngleAxis
+            dataKey="metric"
+            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 500 }}
+          />
+          <PolarRadiusAxis
+            angle={90}
+            domain={[0, 100]}
+            tick={{ fill: '#64748b', fontSize: 9 }}
+            tickCount={4}
+            stroke="rgba(148,163,184,0.1)"
+          />
+          <Radar
+            name={labelA}
+            dataKey="A"
+            stroke="#4a7c59"
+            fill="#4a7c59"
+            fillOpacity={0.25}
+            strokeWidth={2}
+            dot={{ r: 3, fill: '#4a7c59', strokeWidth: 0 }}
+          />
+          <Radar
+            name={labelB}
+            dataKey="B"
+            stroke="#3b82f6"
+            fill="#3b82f6"
+            fillOpacity={0.20}
+            strokeWidth={2}
+            dot={{ r: 3, fill: '#3b82f6', strokeWidth: 0 }}
+          />
+          <Legend
+            wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+            iconType="circle"
+            iconSize={8}
+          />
+          <Tooltip
+            contentStyle={{
+              background: 'rgba(15,23,42,0.92)',
+              border: '1px solid rgba(148,163,184,0.2)',
+              borderRadius: 8,
+              fontSize: 11,
+              color: '#f1f5f9',
+            }}
+            formatter={(val, name) => [`${val}/100`, name]}
+          />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 function GlassTip({ active, payload, label, formatter }) {
   if (!active || !payload?.length) return null
   return (
-    <div style={{
-      background: 'rgba(255, 255, 255, 0.97)',
-      backdropFilter: 'blur(16px)',
-      WebkitBackdropFilter: 'blur(16px)',
-      border: '1px solid rgba(203, 213, 225, 0.8)',
-      borderRadius: 8,
-      padding: '8px 12px',
-      fontSize: 12,
-      color: '#0f172a',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-      lineHeight: 1.6,
-    }}>
-      <div style={{ color: '#64748b', marginBottom: 3 }}>{label}</div>
+    <div className="chart-tip">
+      <div className="chart-tip-label">{label}</div>
       {payload.map((entry, i) => (
-        <div key={i}>
-          <b>{formatter ? formatter(entry.value) : entry.value}</b>
+        <div key={i} className="chart-tip-value">
+          {formatter ? formatter(entry.value) : entry.value}
         </div>
       ))}
     </div>
@@ -69,6 +121,13 @@ export default function StatsPanel({
   const isCompare = !!(statsCompare && missionCompare)
   const [showAnalytics,  setShowAnalytics]  = useState(false)
   const [showAiModal,    setShowAiModal]    = useState(false)
+  const [showSummary,    setShowSummary]    = useState(false)
+
+  // GeoJSON synthétique pour IrrigationSimulator (centroïde → latitude pour ETo)
+  const syntheticGeojson = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: allFeatures,
+  }), [allFeatures])
 
   // Mini navigation prev/next mission
   const missionIdx = missions.findIndex(m => m.id === currentId)
@@ -99,6 +158,85 @@ export default function StatsPanel({
     })
   }, [stats?.stress_breakdown, allFeatures, features, isZonalActive])
 
+  // ── Score de santé (0–100) ──────────────────────────────────────────────
+  const healthScore = useMemo(() => {
+    if (!stats) return null
+    const cwsiMoy = stats.cwsi?.moyenne ?? 0.5
+    const scoreCwsi = Math.max(0, (1 - cwsiMoy) * 50)
+    const total = stats.total_arbres ?? 1
+    const critiques = (stats.stress_breakdown ?? [])
+      .filter(s => s.classe === 'eleve' || s.classe === 'severe')
+      .reduce((n, s) => n + s.count, 0)
+    const pctSains = 1 - (critiques / total)
+    const scoreStress = pctSains * 30
+    let scoreYield = 10
+    if (yieldPredictions) {
+      const vals = Object.values(yieldPredictions).filter(v => v != null && v >= 0)
+      if (vals.length) {
+        const avg = vals.reduce((s, v) => s + v, 0) / vals.length
+        scoreYield = Math.min(20, (avg / 20) * 20)
+      }
+    }
+    return Math.round(scoreCwsi + scoreStress + scoreYield)
+  }, [stats, yieldPredictions])
+
+  const healthLabel = healthScore == null ? null
+    : healthScore >= 75 ? { label: 'Bon état',        color: '#16a34a', bg: 'rgba(22,163,74,0.10)'  }
+    : healthScore >= 50 ? { label: 'État acceptable',  color: '#d97706', bg: 'rgba(217,119,6,0.10)'  }
+    : healthScore >= 30 ? { label: 'État préoccupant', color: '#dc2626', bg: 'rgba(220,38,38,0.10)'  }
+    :                     { label: 'État critique',    color: '#7c3aed', bg: 'rgba(124,58,237,0.10)' }
+
+  const radarData = useMemo(() => {
+    if (!isCompare || !stats || !statsCompare) return []
+
+    const cwsiA = Math.round((1 - (stats.cwsi?.moyenne ?? 0.5)) * 100)
+    const cwsiB = Math.round((1 - (statsCompare.cwsi?.moyenne ?? 0.5)) * 100)
+
+    const tempNorm = t => t == null ? 50 : Math.max(0, Math.min(100, Math.round((45 - t) / 20 * 100)))
+    const tempA = tempNorm(stats.temperature?.moyenne)
+    const tempB = tempNorm(statsCompare.temperature?.moyenne)
+
+    const hautNorm = h => h == null ? 50 : Math.min(100, Math.round(h / 10 * 100))
+    const hautA = hautNorm(
+      stats.hauteur?.min != null && stats.hauteur?.max != null
+        ? (stats.hauteur.min + stats.hauteur.max) / 2 : null
+    )
+    const hautB = hautNorm(
+      statsCompare.hauteur?.min != null && statsCompare.hauteur?.max != null
+        ? (statsCompare.hauteur.min + statsCompare.hauteur.max) / 2 : null
+    )
+
+    const pctSainA = stats.total_arbres > 0
+      ? Math.round((1 - (stats.stress_breakdown ?? [])
+          .filter(s => ['eleve', 'severe'].includes(s.classe))
+          .reduce((n, s) => n + s.count, 0) / stats.total_arbres) * 100)
+      : 50
+    const pctSainB = statsCompare.total_arbres > 0
+      ? Math.round((1 - (statsCompare.stress_breakdown ?? [])
+          .filter(s => ['eleve', 'severe'].includes(s.classe))
+          .reduce((n, s) => n + s.count, 0) / statsCompare.total_arbres) * 100)
+      : 50
+
+    const densA = stats.total_arbres > 0
+      ? Math.round((stats.stress_breakdown ?? [])
+          .filter(s => ['aucun', 'faible'].includes(s.classe))
+          .reduce((n, s) => n + s.count, 0) / stats.total_arbres * 100)
+      : 50
+    const densB = statsCompare.total_arbres > 0
+      ? Math.round((statsCompare.stress_breakdown ?? [])
+          .filter(s => ['aucun', 'faible'].includes(s.classe))
+          .reduce((n, s) => n + s.count, 0) / statsCompare.total_arbres * 100)
+      : 50
+
+    return [
+      { metric: 'Santé CWSI', A: cwsiA,    B: cwsiB    },
+      { metric: 'Confort T°', A: tempA,    B: tempB    },
+      { metric: 'Vigueur',    A: hautA,    B: hautB    },
+      { metric: '% Sains',    A: pctSainA, B: pctSainB },
+      { metric: 'Arbres OK',  A: densA,    B: densB    },
+    ]
+  }, [isCompare, stats, statsCompare])
+
   if (!mission) {
     return (
       <div className="panel">
@@ -127,13 +265,24 @@ export default function StatsPanel({
       {/* ── Bannière sélection zonale ── */}
       {isZonalActive && (
         <div className="zonal-header">
-          <div className="zonal-header-label">
+          <div className="zonal-header-left">
             <LuMapPin size={14} />
-            <span>Zone sélectionnée</span>
-            <span className="zonal-header-count">{stats.total_arbres} arbre{stats.total_arbres !== 1 ? 's' : ''}</span>
+            <div>
+              <span className="zonal-header-label">Zone sélectionnée</span>
+              <span className="zonal-header-stats">
+                {stats.total_arbres} arbre{stats.total_arbres !== 1 ? 's' : ''}
+                {stats.cwsi?.moyenne != null && ` · CWSI moy. ${stats.cwsi.moyenne.toFixed(2)}`}
+                {(() => {
+                  const n = (stats.stress_breakdown ?? [])
+                    .filter(s => s.classe === 'eleve' || s.classe === 'severe')
+                    .reduce((sum, s) => sum + s.count, 0)
+                  return n > 0 ? ` · ${n} critique${n > 1 ? 's' : ''}` : ' · aucun critique'
+                })()}
+              </span>
+            </div>
           </div>
           <button className="btn-clear-zonal" onClick={onClearZonal}>
-            Afficher la parcelle entière
+            ✕ Effacer la zone
           </button>
         </div>
       )}
@@ -208,54 +357,70 @@ export default function StatsPanel({
         </div>
       )}
 
+      {/* ── Radar comparaison ── */}
+      {isCompare && radarData.length > 0 && (
+        <CompareRadar
+          data={radarData}
+          labelA={mission.nom || mission.id}
+          labelB={missionCompare.nom || missionCompare.id}
+        />
+      )}
+
+      {/* ── Score de santé ── */}
+      {healthScore != null && healthLabel && (
+        <HealthGauge
+          score={healthScore}
+          label={healthLabel.label}
+          color={healthLabel.color}
+          bg={healthLabel.bg}
+        />
+      )}
+
       {/* ── Répartition stress ── */}
-      <h3 style={{ marginBottom: 2 }}>Répartition par stress</h3>
-      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '0 0 6px', lineHeight: 1.4 }}>
-        (CWSI : Valeur moyenne de l'indice de stress hydrique pour cette catégorie)
-      </p>
-      <div style={{ width: '100%', height: 310 }}>
+      <div className="stress-chart-header">
+        <h3 className="stress-chart-title">Répartition par stress</h3>
+        <span className="stress-chart-hint">CWSI moyen par classe</span>
+      </div>
+      <div className="stress-chart-wrap" style={{ width: '100%', height: 220 }}>
         <ResponsiveContainer>
           <BarChart
             data={stressChartData}
-            margin={{ top: 24, right: 6, left: 22, bottom: 8 }}
+            margin={{ top: 20, right: 10, left: 10, bottom: 4 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.35)" vertical={false} />
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="rgba(0,0,0,0.06)"
+              vertical={false}
+            />
             <XAxis
               dataKey="label"
               interval={0}
-              fontSize={11}
-              angle={-45}
-              textAnchor="end"
-              tick={{ fill: '#94a3b8' }}
+              fontSize={10}
+              angle={0}
+              textAnchor="middle"
+              tick={{ fill: '#64748b' }}
               tickLine={false}
-              axisLine={{ stroke: 'rgba(148,163,184,0.15)' }}
-              height={55}
+              axisLine={false}
+              height={24}
             />
             <YAxis
-              fontSize={11}
+              fontSize={10}
               tick={{ fill: '#94a3b8' }}
               tickLine={false}
               axisLine={false}
-              width={48}
-              label={{
-                value: "Nb d'oliviers",
-                angle: -90,
-                position: 'insideLeft',
-                offset: 10,
-                style: { fill: '#94a3b8', fontSize: 10 },
-              }}
+              width={32}
             />
-            <Tooltip content={<StressTip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
-            <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+            <Tooltip content={<StressTip />} cursor={{ fill: 'rgba(74,124,89,0.04)' }} />
+            <Bar dataKey="count" radius={[5, 5, 0, 0]} maxBarSize={48}>
               {stressChartData.map((e, i) => (
-                <Cell key={i} fill={e.color} fillOpacity={0.88} />
+                <Cell key={i} fill={e.color} fillOpacity={0.85} />
               ))}
               <LabelList
-                dataKey="avgCwsi"
+                dataKey="count"
                 position="top"
-                formatter={val => val != null ? `CWSI: ${val}` : ''}
-                fill="var(--text-main)"
                 fontSize={10}
+                fontWeight={600}
+                fill="#334155"
               />
             </Bar>
           </BarChart>
@@ -283,6 +448,16 @@ export default function StatsPanel({
         </div>
       )}
 
+      {/* ── Simulateur d'irrigation ── */}
+      <IrrigationSimulator
+        stats={stats}
+        features={isZonalActive && features?.length ? features : allFeatures}
+        parcelSettings={parcelSettings}
+        geojson={syntheticGeojson}
+        mission={mission}
+        yieldPredictions={yieldPredictions}
+      />
+
       {/* ── Bouton analyses détaillées ── */}
       <button
         className="btn-primary"
@@ -291,6 +466,15 @@ export default function StatsPanel({
       >
         <LuChartBar size={14} style={{ marginRight: 6 }} />
         Analyses détaillées
+      </button>
+
+      {/* ── Bouton fiche de synthèse ── */}
+      <button
+        className="btn-secondary"
+        style={{ width: '100%', marginTop: 8 }}
+        onClick={() => setShowSummary(true)}
+      >
+        📋 Fiche de synthèse
       </button>
 
       {/* ── Bouton conseil IA ── */}
@@ -328,6 +512,63 @@ export default function StatsPanel({
           parcelSettings={parcelSettings}
         />
       )}
+
+      {/* ── Modal fiche de synthèse ── */}
+      {showSummary && (
+        <div className="sc-modal-backdrop" onClick={() => setShowSummary(false)}>
+          <div onClick={e => e.stopPropagation()}>
+            <SummaryCard
+              stats={stats}
+              mission={mission}
+              features={isZonalActive && features?.length ? features : allFeatures}
+              allFeatures={allFeatures}
+              parcelSettings={parcelSettings}
+              yieldPredictions={yieldPredictions}
+              onClose={() => setShowSummary(false)}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HealthGauge({ score, label, color, bg }) {
+  const r = 28
+  const circumference = 2 * Math.PI * r
+  const arcLen  = (270 / 360) * circumference
+  const fillLen = (score / 100) * arcLen
+
+  return (
+    <div className="health-gauge-wrap" style={{ background: bg }}>
+      <svg width={72} height={60} viewBox="0 0 72 65" style={{ flexShrink: 0 }}>
+        <circle cx={36} cy={42} r={r} fill="none"
+          stroke="rgba(0,0,0,0.07)" strokeWidth={7}
+          strokeDasharray={`${arcLen} ${circumference}`}
+          strokeDashoffset={0}
+          transform="rotate(135 36 42)"
+          strokeLinecap="round"
+        />
+        <circle cx={36} cy={42} r={r} fill="none"
+          stroke={color} strokeWidth={7}
+          strokeDasharray={`${fillLen} ${circumference}`}
+          strokeDashoffset={0}
+          transform="rotate(135 36 42)"
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 4px ${color}55)`, transition: 'stroke-dasharray 0.8s ease' }}
+        />
+        <text x={36} y={46} textAnchor="middle"
+          fontSize={15} fontWeight={800} fill={color}>
+          {score}
+        </text>
+      </svg>
+      <div className="health-gauge-text">
+        <div className="health-gauge-label" style={{ color }}>{label}</div>
+        <div className="health-gauge-sub">Score santé · /100</div>
+        <div className="health-gauge-detail">
+          CWSI × 50% + Stress × 30% + Rendement × 20%
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,10 +1,20 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LuSlidersHorizontal, LuRotateCcw, LuX } from 'react-icons/lu'
 import { LuRuler, LuDroplet } from 'react-icons/lu'
 
+// État local pour l'affichage pendant le drag ; le callback parent n'est appelé
+// qu'au relâchement (onMouseUp / onTouchEnd) → zéro re-render carte pendant le drag.
 function DualRange({ min, max, lo, hi, step = 0.05, onLoChange, onHiChange }) {
-  const loPct = max > min ? ((lo - min) / (max - min)) * 100 : 0
-  const hiPct = max > min ? ((hi - min) / (max - min)) * 100 : 100
+  const [localLo, setLocalLo] = useState(lo)
+  const [localHi, setLocalHi] = useState(hi)
+
+  // Sync depuis le parent (reset, changement de mission…)
+  useEffect(() => { setLocalLo(lo) }, [lo])
+  useEffect(() => { setLocalHi(hi) }, [hi])
+
+  const loPct = max > min ? ((localLo - min) / (max - min)) * 100 : 0
+  const hiPct = max > min ? ((localHi - min) / (max - min)) * 100 : 100
+
   return (
     <div
       className="fb-dual-range"
@@ -12,13 +22,17 @@ function DualRange({ min, max, lo, hi, step = 0.05, onLoChange, onHiChange }) {
     >
       <input
         type="range" className="fb-thumb fb-thumb-lo"
-        min={min} max={max} step={step} value={lo}
-        onChange={e => onLoChange(parseFloat(e.target.value))}
+        min={min} max={max} step={step} value={localLo}
+        onChange={e => setLocalLo(parseFloat(e.target.value))}
+        onMouseUp={e => onLoChange(parseFloat(e.target.value))}
+        onTouchEnd={e => onLoChange(parseFloat(e.currentTarget.value))}
       />
       <input
         type="range" className="fb-thumb fb-thumb-hi"
-        min={min} max={max} step={step} value={hi}
-        onChange={e => onHiChange(parseFloat(e.target.value))}
+        min={min} max={max} step={step} value={localHi}
+        onChange={e => setLocalHi(parseFloat(e.target.value))}
+        onMouseUp={e => onHiChange(parseFloat(e.target.value))}
+        onTouchEnd={e => onHiChange(parseFloat(e.currentTarget.value))}
       />
     </div>
   )

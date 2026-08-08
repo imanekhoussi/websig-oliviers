@@ -1,15 +1,17 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import logoSvg from './assets/images/logo.svg'
 import { ToastProvider } from './hooks/useToast'
 import { useToast }       from './hooks/useToast'
 import { useMissions }    from './hooks/useMissions'
 import { useMissionData } from './hooks/useMissionData'
-import TreeMap        from './components/TreeMap'
-import StatsPanel     from './components/StatsPanel'
-import Legend         from './components/Legend'
-import TrendPanel     from './components/TrendPanel'
-import MapFilterBar   from './components/MapFilterBar'
-import AnomalyPanel   from './components/AnomalyPanel'
+import TreeMap              from './components/TreeMap'
+import StatsPanel           from './components/StatsPanel'
+import Legend               from './components/Legend'
+import TrendPanelBase       from './components/TrendPanel'
+import AnomalyPanelBase     from './components/AnomalyPanel'
+
+const TrendPanel   = memo(TrendPanelBase)
+const AnomalyPanel = memo(AnomalyPanelBase)
 import MissionSelector from './components/MissionSelector'
 import MissionManager  from './components/MissionManager'
 import DashboardHome   from './components/DashboardHome'
@@ -30,6 +32,9 @@ import {
   LuDownload, LuGitCompare,
 } from 'react-icons/lu'
 import ExportModal from './components/ExportModal'
+import AlertBanner from './components/AlertBanner'
+import ProgressBar from './components/ProgressBar'
+import { useDocumentTitle } from './hooks/useDocumentTitle'
 
 function loadParcelSettings() {
   try {
@@ -41,6 +46,14 @@ function loadParcelSettings() {
 
 
 const STRESS_LEVELS = ['aucun', 'faible', 'modere', 'eleve', 'severe']
+
+/** Construit le label d'une mission sans dupliquer la date quand elle est déjà dans le nom. */
+function missionLabel(m) {
+  if (!m) return ''
+  const name = m.nom || m.id || ''
+  if (m.date && !name.includes(m.date)) return `${name} · ${m.date}`
+  return name
+}
 
 /** Recalcule les stats serveur-équivalentes sur un sous-ensemble de features */
 function computeZonalStats(features) {
@@ -149,6 +162,9 @@ function Dashboard() {
   // ── Filtre IA carte (déclenché par l'agent chat) ─────────────────────────
   const [mapFilter, setMapFilter] = useState(null)
 
+  // ── Bannière d'alerte ────────────────────────────────────────────────────
+  const [alertDismissed, setAlertDismissed] = useState(false)
+
   // ── Modal export ─────────────────────────────────────────────────────────
   const [showExport, setShowExport] = useState(false)
 
@@ -162,6 +178,11 @@ function Dashboard() {
   const [filterHauteur, setFilterHauteur] = useState(null)
   const [filterCwsi,    setFilterCwsi]    = useState(null)
   const [filterCirc,    setFilterCirc]    = useState(null)
+
+  // Reset l'alerte à chaque changement de mission
+  useEffect(() => {
+    setAlertDismissed(false)
+  }, [currentId])
 
   // Auto-sélectionne la première mission avec données au premier chargement
   const didInit = useRef(false)
@@ -277,6 +298,30 @@ function Dashboard() {
 
   const displayStats = zonalStats ?? advancedFilterStats ?? stats
 
+  // ── Barre de progression globale ─────────────────────────────────────────
+  const globalLoading = loading || dataLoading || yieldLoading || anomalyLoading
+
+  // ── Titre dynamique + favicon selon CWSI ─────────────────────────────────
+  const dynamicTitle = useMemo(() => {
+    if (currentMission && stats) {
+      const nom     = currentMission.nom || currentMission.id
+      const cwsi    = stats.cwsi?.moyenne
+      const cwsiStr = cwsi != null ? ` · CWSI ${cwsi.toFixed(2)}` : ''
+      const alertStr = cwsi >= 0.75 ? ' 🚨'
+                     : cwsi >= 0.50 ? ' ⚠'
+                     : cwsi >= 0.35 ? ' ℹ'
+                     : ' ✓'
+      return `GeoOlive — ${nom}${cwsiStr}${alertStr}`
+    }
+    if (currentMission) return `GeoOlive — ${currentMission.nom || currentMission.id} · Chargement…`
+    if (currentView === 'home')     return 'GeoOlive — Tableau de bord'
+    if (currentView === 'settings') return 'GeoOlive — Paramètres'
+    if (currentView === 'catalog')  return 'GeoOlive — Catalogue arbres'
+    return 'GeoOlive — WebSIG Oliviers'
+  }, [currentMission, stats, currentView])
+
+  useDocumentTitle(dynamicTitle, stats?.cwsi?.moyenne ?? null)
+
   // Calcul des indices de vulnérabilité MCDA (AHP) en temps réel
   const mcdaScores = useMemo(() => {
     if (!showMCDA || !geojson?.features?.length) return {}
@@ -383,6 +428,22 @@ function Dashboard() {
     setFilterCirc(null)
   }
 
+  // ── Props stables pour <TreeMap> — évite les re-renders sur tout changement d'état parent ──
+  const currentLabel = useMemo(() => missionLabel(currentMission), [currentMission])
+  const compareLabel = useMemo(() => missionLabel(compareMission), [compareMission])
+
+  const handleToggleAnomalies  = useCallback(() => setShowAnomalies(v => !v), [])
+  const handleMapFilterReset   = useCallback(() => setMapFilter(null), [])
+  const handleSetSelectedTrees = useCallback((trees) => setSelectedTrees(trees), [])
+  const handleHauteurChange    = useCallback((v) => setFilterHauteur(v), [])
+  const handleCwsiChange       = useCallback((v) => setFilterCwsi(v), [])
+  const handleCircChange       = useCallback((v) => setFilterCirc(v), [])
+  const handleFilterReset      = useCallback(() => {
+    setFilterHauteur(null)
+    setFilterCwsi(null)
+    setFilterCirc(null)
+  }, [])
+
   function toggleStress(level) {
     setActiveStress(prev =>
       prev.includes(level)
@@ -402,11 +463,29 @@ function Dashboard() {
     }
   }
 
-  if (loading) return <LoadingScreen />
+  if (loading) return (
+    <>
+      <ProgressBar loading={true} />
+      <LoadingScreen />
+    </>
+  )
 
   console.log('[Render App] État showManager:', showManager);
 
   return (
+    <>
+    <ProgressBar
+      loading={globalLoading}
+      color={anomalyLoading ? '#f59e0b' : yieldLoading ? '#8b5cf6' : '#4a7c59'}
+    />
+    {!alertDismissed && stats && (
+      <AlertBanner
+        stats={stats}
+        mission={currentMission}
+        onDismiss={() => setAlertDismissed(true)}
+        autoHideMs={8000}
+      />
+    )}
     <div className="app">
 
       {/* ── HEADER ── */}
@@ -509,7 +588,7 @@ function Dashboard() {
                   .filter(m => m.id !== currentId && m.has_shapefile)
                   .map(m => (
                     <option key={m.id} value={m.id}>
-                      {m.nom || m.id} · {m.date}
+                      {missionLabel(m)}
                     </option>
                   ))}
               </select>
@@ -517,12 +596,12 @@ function Dashboard() {
           )}
 
           <button
-            className={`btn-compare${isCompareMode ? ' active' : ''}`}
+            className={`btn-compare${isCompareMode ? ' active compare-active' : ''}`}
             onClick={toggleCompareMode}
             title={isCompareMode ? 'Désactiver la comparaison' : 'Comparer deux missions'}
           >
             <LuGitCompare size={13} />
-            {isCompareMode ? 'Arrêter' : 'Comparer'}
+            {isCompareMode ? 'Comparaison active' : 'Comparer'}
           </button>
         </div>
       </header>
@@ -555,6 +634,7 @@ function Dashboard() {
             features={filteredGeojson?.features ?? []}
             allFeatures={geojson?.features ?? []}
             onBack={() => setCurrentView('map')}
+            parcelSettings={parcelSettings}
           />
         </div>
       )}
@@ -793,34 +873,18 @@ function Dashboard() {
       {/* ── CARTE CENTRALE ── */}
       <main className="col-map">
 
-        {/* ── Barre de filtres flottante (bas gauche) ── */}
-        <MapFilterBar
-          filterCwsi={filterCwsi}
-          onCwsiChange={setFilterCwsi}
-          cwsiRange={dataRanges.cwsi}
-          filterHauteur={filterHauteur}
-          onHauteurChange={setFilterHauteur}
-          hauteurRange={dataRanges.hauteur}
-          filterCirc={filterCirc}
-          onCircChange={setFilterCirc}
-          circRange={circRange}
-          onReset={resetFilters}
-          filteredCount={filteredGeojson?.features?.length ?? 0}
-          totalCount={geojson?.features?.length ?? 0}
-        />
-
         <TreeMap
           geojson={filteredGeojson}
           activeStress={activeStress}
           isCompareMode={isCompareMode}
           geojsonCompare={geojsonCompare}
-          currentLabel={currentMission ? (currentMission.nom || currentMission.id) + ' · ' + currentMission.date : ''}
-          compareLabel={compareMission ? (compareMission.nom || compareMission.id) + ' · ' + compareMission.date : ''}
+          currentLabel={currentLabel}
+          compareLabel={compareLabel}
           currentId={currentId}
           currentMission={currentMission ?? null}
           compareMission={compareMission ?? null}
           showHotspots={showHotspots}
-          setSelectedTrees={setSelectedTrees}
+          setSelectedTrees={handleSetSelectedTrees}
           selectedTrees={selectedTrees}
           showIDW={showIDW}
           showRoute={showRoute}
@@ -838,19 +902,19 @@ function Dashboard() {
           filterHauteur={filterHauteur}
           filterCwsi={filterCwsi}
           filterCirc={filterCirc}
-          onHauteurChange={setFilterHauteur}
-          onCwsiChange={setFilterCwsi}
-          onCircChange={setFilterCirc}
-          onFilterReset={resetFilters}
+          onHauteurChange={handleHauteurChange}
+          onCwsiChange={handleCwsiChange}
+          onCircChange={handleCircChange}
+          onFilterReset={handleFilterReset}
           totalCount={geojson?.features?.length ?? 0}
           showAnomalies={showAnomalies}
           anomalyData={anomalyData}
           anomalyLoading={anomalyLoading}
-          onToggleAnomalies={() => setShowAnomalies(v => !v)}
+          onToggleAnomalies={handleToggleAnomalies}
           mapMode={mapMode}
           yieldPredictions={yieldPredictions}
           mapFilter={mapFilter}
-          onMapFilterReset={() => setMapFilter(null)}
+          onMapFilterReset={handleMapFilterReset}
           flyToTree={flyToTree}
         />
 
@@ -891,7 +955,7 @@ function Dashboard() {
             />
           )}
 
-          <TrendPanel missions={missions} currentId={currentId} geojson={filteredGeojson} onSelectMission={handleSelect} />
+          <TrendPanel missions={missions} currentId={currentId} geojson={geojson} onSelectMission={handleSelect} />
 
           {anomalyData && <AnomalyPanel anomalyData={anomalyData} />}
 
@@ -928,6 +992,7 @@ function Dashboard() {
       )}
 
     </div>
+    </>
   )
 }
 

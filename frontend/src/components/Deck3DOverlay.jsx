@@ -44,7 +44,7 @@ export default function Deck3DOverlay({ geojson, initialViewState, onClose }) {
         return {
           position: pos,
           elevation: Math.max(hauteur ?? 2, 0.5) * ELEV_SCALE,
-          color: hexToRgb(STRESS_COLORS[stress] ?? '#95a5a6'),
+          color: hexToRgb(STRESS_COLORS[stress] ?? '#7e8c80'),
           id,
           hauteur,
           cwsi,

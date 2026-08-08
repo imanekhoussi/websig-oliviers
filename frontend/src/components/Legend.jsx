@@ -23,6 +23,10 @@ export default function Legend({ activeStress, onToggle, visibleCount, stressCou
         </span>
       </h4>
 
+      {isInteractive && (
+        <p className="legend-filter-hint">Cliquer pour filtrer la carte</p>
+      )}
+
       {/* ── Barre empilée compacte ── */}
       {countMap && total > 0 && (
         <div className="legend-stacked-bar">

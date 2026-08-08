@@ -1,4 +1,4 @@
-const API = 'http://localhost:8000'
+export const API = import.meta.env.VITE_API_URL ?? ''
 
 // ===== Missions =====
 export async function listMissions() {

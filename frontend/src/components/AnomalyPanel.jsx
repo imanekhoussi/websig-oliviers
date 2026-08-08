@@ -51,7 +51,7 @@ export default function AnomalyPanel({ anomalyData }) {
             <span className="anomaly-row-id">Arbre {a.id}</span>
             <span
               className="anomaly-row-stress"
-              style={{ background: STRESS_COLORS[a.stress] ?? '#95a5a6' }}
+              style={{ background: STRESS_COLORS[a.stress] ?? '#7e8c80' }}
             >
               {SHORT_STRESS[a.stress] ?? a.stress}
             </span>

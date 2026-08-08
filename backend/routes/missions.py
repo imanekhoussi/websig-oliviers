@@ -480,7 +480,24 @@ def _hex_rgb(hex_color: str):
 
 
 def _safe(text: str) -> str:
-    return text.encode('cp1252', errors='replace').decode('cp1252')
+    if not text:
+        return ""
+    _REPLACEMENTS = {
+        "–": "-",    # – en-dash
+        "—": "-",    # — em-dash
+        "’": "'",    # ' right single quotation mark
+        "‘": "'",    # ' left single quotation mark
+        "“": '"',    # " left double quotation mark
+        "”": '"',    # " right double quotation mark
+        "«": '"',    # «
+        "»": '"',    # »
+        "…": "...",  # … ellipsis
+        "×": "x",    # × multiplication
+        "°": " deg", # ° degree
+    }
+    for ch, repl in _REPLACEMENTS.items():
+        text = text.replace(ch, repl)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
 def _build_pdf(mission_id: str, meta: dict, gdf) -> bytes:

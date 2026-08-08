@@ -1,0 +1,43 @@
+services:
+
+  # ── Backend FastAPI ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Autoriser les requêtes CORS depuis le frontend Nginx (utile en dev direct)
+      ALLOWED_ORIGINS: "http://localhost"
+    volumes:
+      # Persistance des missions uploadées
+      - missions_data:/app/data/missions
+      - uploads_data:/app/uploads
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Frontend React + Nginx ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Vide = URLs relatives → Nginx proxifie vers backend
+        VITE_API_URL: ""
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  missions_data:
+  uploads_data:

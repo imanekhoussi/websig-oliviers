@@ -48,7 +48,16 @@
       "Bash(Get-ChildItem \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\" -Name)",
       "Bash(Select-String -Pattern \"joblib|model\")",
       "Bash(dir C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend *)",
-      "Bash(dir \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\models\" /b)"
+      "Bash(dir \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\backend\\\\models\" /b)",
+      "Bash(dir C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\frontend\\\\src\\\\styles *)",
+      "Bash(Get-ChildItem -Recurse \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\frontend\\\\src\" -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\Yoga\\\\Documents\\\\geoinfo\\\\PFE\\\\websig_oliviers\\\\websig_oliviers\\\\frontend\\\\src\\\\styles.css\"\\).Count)",
+      "PowerShell(New-Item *)",
+      "PowerShell(docker info *)",
+      "PowerShell(docker compose up *)",
+      "PowerShell(docker volume ls *)"
     ]
   }
 }

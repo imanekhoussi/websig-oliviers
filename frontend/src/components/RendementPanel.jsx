@@ -6,11 +6,11 @@ import {
 import { LuLeaf, LuTrendingUp, LuX } from 'react-icons/lu'
 
 const BINS = [
-  { label: '0–5',  min: 0,  max: 5,       color: '#ef4444' },
-  { label: '5–10', min: 5,  max: 10,       color: '#f97316' },
-  { label: '10–15',min: 10, max: 15,       color: '#fbbf24' },
-  { label: '15–20',min: 15, max: 20,       color: '#86efac' },
-  { label: '20+',  min: 20, max: Infinity, color: '#22c55e' },
+  { label: '0–5',  min: 0,  max: 5,       color: '#bf3226' },
+  { label: '5–10', min: 5,  max: 10,       color: '#c96e1c' },
+  { label: '10–15',min: 10, max: 15,       color: '#a89520' },
+  { label: '15–20',min: 15, max: 20,       color: '#86c9a0' },
+  { label: '20+',  min: 20, max: Infinity, color: '#3d9960' },
 ]
 
 const panelStyle = {
@@ -27,7 +27,7 @@ const headerStyle = {
 }
 const titleStyle = {
   display: 'flex', alignItems: 'center', gap: 5,
-  fontSize: 11, fontWeight: 600, color: '#22c55e', letterSpacing: '0.03em',
+  fontSize: 11, fontWeight: 600, color: '#3d9960', letterSpacing: '0.03em',
 }
 const closeBtnStyle = {
   background: 'none', border: 'none', cursor: 'pointer',

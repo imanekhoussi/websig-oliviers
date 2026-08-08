@@ -1,10 +1,10 @@
 export const STRESS_COLORS = {
-  aucun: '#2ecc71',
-  faible: '#f1c40f',
-  modere: '#e67e22',
-  eleve: '#e74c3c',
-  severe: '#8e44ad',
-  inconnu: '#95a5a6',
+  aucun:   '#2ecc71',
+  faible:  '#f1c40f',
+  modere:  '#e67e22',
+  eleve:   '#e74c3c',
+  severe:  '#8e44ad',
+  inconnu: '#64748b',
 }
 
 export const STRESS_LABELS = {

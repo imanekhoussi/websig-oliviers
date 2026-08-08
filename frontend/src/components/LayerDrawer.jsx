@@ -24,7 +24,7 @@ export const BASEMAPS = {
 
 const BASEMAP_META = [
   { id: 'satellite', icon: <LuSatellite size={14} />, color: '#0ea5e9' },
-  { id: 'osm',       icon: <LuMap      size={14} />, color: '#22c55e' },
+  { id: 'osm',       icon: <LuMap      size={14} />, color: '#3d9960' },
   { id: 'dark',      icon: <LuMoon     size={14} />, color: '#818cf8' },
 ]
 

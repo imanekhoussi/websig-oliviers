@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import L from 'leaflet'
 import { MapContainer, TileLayer, LayerGroup, Marker, CircleMarker, Polygon, GeoJSON, Popup, Pane, useMap } from 'react-leaflet'
+import MarkerClusterGroup from 'react-leaflet-cluster'
+import 'react-leaflet-cluster/lib/assets/MarkerCluster.css'
+import 'react-leaflet-cluster/lib/assets/MarkerCluster.Default.css'
 import * as turf from '@turf/turf'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import 'leaflet-draw'
@@ -9,17 +12,20 @@ import {
   ResponsiveContainer, ReferenceDot,
 } from 'recharts'
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
-import { fetchTreeHistory } from '../api'
+import { fetchTreeHistory, API } from '../api'
 import {
   LuThermometer, LuRuler, LuDroplet, LuFootprints,
   LuZoomIn, LuZoomOut, LuLocate,
   LuPentagon, LuSquare, LuMapPin, LuPencil, LuTrash2,
   LuTreePine, LuSatellite, LuThermometer as LuThermIcon,
+  LuGrid3X3, LuCrosshair,
 } from 'react-icons/lu'
+import html2canvas from 'html2canvas'
 import WeatherWidget from './WeatherWidget'
 import { useToast } from '../hooks/useToast'
 import Deck3DOverlay from './Deck3DOverlay'
 import LayerDrawer, { BASEMAPS } from './LayerDrawer'
+import MapFilterBar from './MapFilterBar'
 
 const DEFAULT_CENTER = [35.76, -5.83]
 const DEFAULT_ZOOM   = 7
@@ -36,12 +42,9 @@ const DEFAULT_ZOOM   = 7
  *
  * Pour Polyline / Marker : désélectionne uniquement (pas de zone).
  */
-function DrawControl({ allFeatures, setSelectedTrees }) {
-  const map          = useMap()
-  const toast        = useToast()
-  const allFeaturesRef = useRef(allFeatures)
-
-  useEffect(() => { allFeaturesRef.current = allFeatures }, [allFeatures])
+function DrawControl({ allFeaturesRef, setSelectedTrees, setMeasureResult }) {
+  const map  = useMap()
+  const toast = useToast()
 
   useEffect(() => {
     if (!map || !setSelectedTrees) return
@@ -86,8 +89,26 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       fg.clearLayers()
       fg.addLayer(e.layer)
 
-      // Polyline et marker : pas de sélection spatiale
-      if (e.layerType === 'polyline' || e.layerType === 'marker') {
+      // Polyline : mesure de distance
+      if (e.layerType === 'polyline') {
+        const coords = e.layer.getLatLngs()
+        let totalM = 0
+        for (let i = 0; i < coords.length - 1; i++) {
+          const from = turf.point([coords[i].lng, coords[i].lat])
+          const to   = turf.point([coords[i + 1].lng, coords[i + 1].lat])
+          totalM += turf.distance(from, to, { units: 'meters' })
+        }
+        const display = totalM >= 1000
+          ? `${(totalM / 1000).toFixed(3)} km`
+          : `${totalM.toFixed(1)} m`
+        if (setMeasureResult) setMeasureResult({ type: 'distance', value: display, n: coords.length })
+        toast(`Distance mesurée : ${display}`, 'info')
+        setSelectedTrees(null)
+        return
+      }
+
+      // Marker : pas de traitement
+      if (e.layerType === 'marker') {
         setSelectedTrees(null)
         return
       }
@@ -98,6 +119,23 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
       // Calcul de la surface en hectares
       const areaM2 = turf.area(selectionPolygon)
       const areaHa = (areaM2 / 10000).toFixed(2)
+
+      // Calcul du périmètre
+      const perimCoords = e.layer.getLatLngs()[0] ?? []
+      let perimM = 0
+      for (let i = 0; i < perimCoords.length; i++) {
+        const from = turf.point([perimCoords[i].lng, perimCoords[i].lat])
+        const to   = turf.point([perimCoords[(i + 1) % perimCoords.length].lng, perimCoords[(i + 1) % perimCoords.length].lat])
+        perimM += turf.distance(from, to, { units: 'meters' })
+      }
+      const areaDisplay  = Number(areaHa) >= 1 ? `${areaHa} ha` : `${areaM2.toFixed(1)} m²`
+      const perimDisplay = perimM >= 1000 ? `${(perimM / 1000).toFixed(3)} km` : `${perimM.toFixed(1)} m`
+      if (setMeasureResult) setMeasureResult({
+        type: 'surface',
+        value: areaDisplay,
+        extra: `Périmètre : ${perimDisplay}`,
+        n: perimCoords.length,
+      })
 
       if (!features?.length) {
         setSelectedTrees([])
@@ -124,12 +162,52 @@ function DrawControl({ allFeatures, setSelectedTrees }) {
 
     function handleDeleted() { setSelectedTrees(null) }
 
+    function handleDrawVertex(e) {
+      const latlngs = e.layers?._layers
+        ? Object.values(e.layers._layers).flatMap(l => l.getLatLngs?.() ?? [])
+        : []
+      if (!latlngs.length) return
+
+      const lats = latlngs.flat().map(ll => ll.lat)
+      const lngs = latlngs.flat().map(ll => ll.lng)
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats)
+      const minLng = Math.min(...lngs), maxLng = Math.max(...lngs)
+
+      const liveCount = (allFeaturesRef.current ?? []).filter(f => {
+        const c = f.geometry?.coordinates
+        if (!c) return false
+        const [lng, lat] = Array.isArray(c[0]) ? c[0] : c
+        return lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng
+      }).length
+
+      const tooltip = document.querySelector('.leaflet-draw-tooltip')
+      if (tooltip) {
+        const existing = tooltip.querySelector('.live-count-badge')
+        if (existing) {
+          existing.textContent = `~${liveCount} arbres`
+        } else {
+          const badge = document.createElement('span')
+          badge.className = 'live-count-badge'
+          badge.textContent = `~${liveCount} arbres`
+          badge.style.cssText = `
+            display: block; margin-top: 4px;
+            background: rgba(74,124,89,0.9); color: white;
+            padding: 2px 8px; border-radius: 99px;
+            font-size: 11px; font-weight: 700; text-align: center;
+          `
+          tooltip.appendChild(badge)
+        }
+      }
+    }
+
     map.on(window.L.Draw.Event.CREATED, handleCreated)
     map.on(window.L.Draw.Event.DELETED, handleDeleted)
+    map.on('draw:drawvertex', handleDrawVertex)
 
     return () => {
       map.off(window.L.Draw.Event.CREATED, handleCreated)
       map.off(window.L.Draw.Event.DELETED, handleDeleted)
+      map.off('draw:drawvertex', handleDrawVertex)
       map.removeControl(drawControl)
       map.removeLayer(fg)
     }
@@ -143,19 +221,22 @@ function reverseCoordinates(coords) {
   return coords.map(reverseCoordinates)
 }
 
-/** Contrôleur interne : ajuste la vue pour englober toute l'emprise des données */
-function MapController({ geojson, flyToTree }) {
-  const map     = useMap()
-  const prevRef = useRef(null)
+/** Contrôleur interne : ajuste la vue pour englober toute l'emprise des données.
+ *  Suit l'ID de mission (pas la référence geojson) pour ne pas voler sur
+ *  un simple changement de filtre (filteredGeojson crée un nouvel objet). */
+function MapController({ geojson, flyToTree, currentId }) {
+  const map         = useMap()
+  const prevFlyRef  = useRef(null)  // dernier currentId pour lequel on a volé
 
   useEffect(() => {
-    if (!geojson?.features?.length || geojson === prevRef.current) return
-    prevRef.current = geojson
+    if (!geojson?.features?.length) return
+    if (currentId === prevFlyRef.current) return  // même mission → filtre changé, pas de flyTo
+    prevFlyRef.current = currentId
     if (flyToTree) return  // zoom arbre du catalogue a priorité sur flyToBounds
     const bbox   = turf.bbox(geojson)
     const bounds = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]]
     map.flyToBounds(bounds, { padding: [40, 40], duration: 1.5 })
-  }, [geojson, map, flyToTree])
+  }, [currentId, geojson, map, flyToTree])
 
   useEffect(() => {
     if (!flyToTree) return
@@ -325,13 +406,98 @@ function cwsiToStressColor(cwsi) {
 
 /** Traduit un rendement prédit (kg/arbre) en couleur pour le mode 'yield'. */
 function yieldToColor(kg) {
-  if (kg == null) return '#95a5a6'   // gris  — donnée manquante
-  if (kg < 15)    return '#e74c3c'   // rouge — faible
-  if (kg < 25)    return '#f39c12'   // orange — moyen
-  return '#27ae60'                   // vert  — bon rendement
+  if (kg == null) return '#7e8c80'
+  if (kg < 15)    return '#bf3226'
+  if (kg < 25)    return '#c96e1c'
+  return '#3d9960'
 }
 
+// ── Helpers pour les couches GeoJSON du mode comparaison ────────────────────
+// Définis au niveau module (références stables → pas de re-render parasite).
+
+/** Style Leaflet pour les features polygones en mode comparaison CWSI */
+function cmpStressStyle(feature) {
+  const color = STRESS_COLORS[feature.properties.stress] || STRESS_COLORS.inconnu
+  return {
+    fillColor:   color,
+    fillOpacity: 0.90,
+    color:       'rgba(255,255,255,0.60)',
+    weight:      1.2,
+    stroke:      true,
+  }
+}
+
+/** pointToLayer pour les features Point dans le pane gauche (mission courante) */
+function cmpPtLeft(feature, latlng) {
+  const color = STRESS_COLORS[feature.properties.stress] || STRESS_COLORS.inconnu
+  return L.circleMarker(latlng, {
+    radius: 10, pane: 'left-pane',
+    fillColor: color, fillOpacity: 0.90,
+    color: 'rgba(255,255,255,0.60)', weight: 1.5,
+  })
+}
+
+/** pointToLayer pour les features Point dans le pane droit (mission comparée) */
+function cmpPtRight(feature, latlng) {
+  const color = STRESS_COLORS[feature.properties.stress] || STRESS_COLORS.inconnu
+  return L.circleMarker(latlng, {
+    radius: 10, pane: 'right-pane',
+    fillColor: color, fillOpacity: 0.90,
+    color: 'rgba(255,255,255,0.60)', weight: 1.5,
+  })
+}
+
+/** Icône de cluster personnalisée — couleur = stress le plus grave parmi les enfants */
+function createClusterIcon(cluster) {
+  const count   = cluster.getChildCount()
+  const markers = cluster.getAllChildMarkers()
+
+  const stressCounts = { severe: 0, eleve: 0, modere: 0, faible: 0, aucun: 0 }
+  markers.forEach(m => {
+    const stress = m.feature?.properties?.stress ?? m.options?.stress
+    if (stress && stressCounts[stress] !== undefined) stressCounts[stress]++
+  })
+
+  const dominantColor =
+    stressCounts.severe > 0 ? '#8e44ad' :
+    stressCounts.eleve  > 0 ? '#e74c3c' :
+    stressCounts.modere > 0 ? '#e67e22' :
+    stressCounts.faible > 0 ? '#f1c40f' :
+    '#2ecc71'
+
+  const size = count > 100 ? 44 : count > 20 ? 38 : 32
+
+  return L.divIcon({
+    html: `<div style="
+      width:${size}px;height:${size}px;
+      background:${dominantColor};
+      border:2.5px solid rgba(255,255,255,0.9);
+      border-radius:50%;
+      display:flex;align-items:center;justify-content:center;
+      font-size:${count > 99 ? 10 : 12}px;
+      font-weight:700;color:white;
+      box-shadow:0 2px 8px rgba(0,0,0,0.35);
+      font-family:system-ui,sans-serif;
+    ">${count}</div>`,
+    className: '',
+    iconSize:   [size, size],
+    iconAnchor: [size / 2, size / 2],
+  })
+}
+
+
 const SECTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6']
+
+const KNOWN_STRESS_CLASSES = new Set(['aucun', 'faible', 'modere', 'eleve', 'severe'])
+
+function vulnerabilityToColor(score) {
+  if (score == null) return '#64748b'
+  if (score < 20)   return '#3d9960'
+  if (score < 40)   return '#a89520'
+  if (score < 60)   return '#c96e1c'
+  if (score < 80)   return '#bf3226'
+  return '#7b3e97'
+}
 
 /** Labels lisibles pour chaque type de filtre IA */
 const MAP_FILTER_LABELS = {
@@ -394,31 +560,107 @@ function hexbinStyleFn(feature) {
   }
 }
 
+/** Conversion degrés décimaux → DMS (Degrés Minutes Secondes) */
+function toDMS(dd, dirs) {
+  const [pos, neg] = dirs.split('/')
+  const dir = dd >= 0 ? pos : neg
+  const abs = Math.abs(dd)
+  const deg = Math.floor(abs)
+  const minFull = (abs - deg) * 60
+  const min = Math.floor(minFull)
+  const sec = ((minFull - min) * 60).toFixed(1)
+  return `${deg}° ${min}' ${sec}" ${dir}`
+}
+
+/** Écoute le mousemove sur la carte et remonte les coordonnées */
+function CursorCoords({ active, onMove }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!active) return
+    function onMouseMove(e) { onMove({ lat: e.latlng.lat, lng: e.latlng.lng }) }
+    map.on('mousemove', onMouseMove)
+    return () => map.off('mousemove', onMouseMove)
+  }, [map, active, onMove])
+  return null
+}
+
+/** Grille de coordonnées (graticule) dessinée avec des Polyline Leaflet */
+function Graticule({ visible }) {
+  const map = useMap()
+  const layerRef = useRef(null)
+
+  useEffect(() => {
+    if (layerRef.current) { map.removeLayer(layerRef.current); layerRef.current = null }
+    if (!visible) return
+
+    function drawGraticule() {
+      if (layerRef.current) { map.removeLayer(layerRef.current); layerRef.current = null }
+
+      const zoom  = map.getZoom()
+      const step  = zoom >= 17 ? 0.001 : zoom >= 15 ? 0.005 : zoom >= 13 ? 0.01 : zoom >= 11 ? 0.05 : 0.1
+      const decimals = step < 0.01 ? 4 : step < 0.1 ? 3 : 2
+
+      const bounds = map.getBounds()
+      const minLat = Math.floor(bounds.getSouth() / step) * step
+      const maxLat = Math.ceil(bounds.getNorth()  / step) * step
+      const minLng = Math.floor(bounds.getWest()  / step) * step
+      const maxLng = Math.ceil(bounds.getEast()   / step) * step
+
+      const layers = []
+      const lineStyle = { color: 'rgba(148,163,184,0.35)', weight: 0.8, dashArray: '3 6', interactive: false }
+
+      for (let lat = minLat; lat <= maxLat + step * 0.1; lat = +(lat + step).toFixed(6)) {
+        layers.push(L.polyline([[lat, minLng], [lat, maxLng]], lineStyle))
+        layers.push(L.marker([lat, minLng + (maxLng - minLng) * 0.02], {
+          icon: L.divIcon({
+            html: `<span class="graticule-label">${lat.toFixed(decimals)}°N</span>`,
+            className: '', iconAnchor: [0, 8],
+          }),
+          interactive: false,
+        }))
+      }
+      for (let lng = minLng; lng <= maxLng + step * 0.1; lng = +(lng + step).toFixed(6)) {
+        layers.push(L.polyline([[minLat, lng], [maxLat, lng]], lineStyle))
+      }
+
+      layerRef.current = L.layerGroup(layers).addTo(map)
+    }
+
+    drawGraticule()
+    map.on('moveend zoomend', drawGraticule)
+    return () => {
+      map.off('moveend zoomend', drawGraticule)
+      if (layerRef.current) map.removeLayer(layerRef.current)
+    }
+  }, [map, visible])
+
+  return null
+}
+
 /**
  * Toolbar de dessin personnalisée — remplace visuellement les contrôles leaflet-draw.
  * Les boutons déclenchent programmatiquement les handlers cachés de leaflet-draw.
  */
-function MapDrawToolbar({ mapRef, geojson }) {
+function MapDrawToolbar({ mapRef, geojson, showCoords, setShowCoords, showGraticule, setShowGraticule }) {
   const [activeTool, setActiveTool] = useState(null)
 
-  // Écoute les événements draw pour synchroniser l'état actif
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     const onStop    = () => setActiveTool(null)
     const onEditSt  = () => setActiveTool('edit')
     const onDelSt   = () => setActiveTool('delete')
-    map.on('draw:drawstop',   onStop)
-    map.on('draw:editstart',  onEditSt)
-    map.on('draw:editstop',   onStop)
-    map.on('draw:deletestart',onDelSt)
-    map.on('draw:deletestop', onStop)
+    map.on('draw:drawstop',    onStop)
+    map.on('draw:editstart',   onEditSt)
+    map.on('draw:editstop',    onStop)
+    map.on('draw:deletestart', onDelSt)
+    map.on('draw:deletestop',  onStop)
     return () => {
-      map.off('draw:drawstop',   onStop)
-      map.off('draw:editstart',  onEditSt)
-      map.off('draw:editstop',   onStop)
-      map.off('draw:deletestart',onDelSt)
-      map.off('draw:deletestop', onStop)
+      map.off('draw:drawstop',    onStop)
+      map.off('draw:editstart',   onEditSt)
+      map.off('draw:editstop',    onStop)
+      map.off('draw:deletestart', onDelSt)
+      map.off('draw:deletestop',  onStop)
     }
   }, [mapRef])
 
@@ -437,7 +679,7 @@ function MapDrawToolbar({ mapRef, geojson }) {
 
   const T = ({ icon, title, cls, toolId }) => (
     <button
-      className={`mdt-btn${activeTool === toolId ? ' active' : ''}`}
+      className={`mdt-btn${activeTool === toolId ? ' tool-active' : ''}`}
       title={title}
       onClick={() => toolId ? trigger(cls, toolId) : undefined}
     >
@@ -449,33 +691,55 @@ function MapDrawToolbar({ mapRef, geojson }) {
     <div className="mdt-toolbar">
       {/* Navigation */}
       <div className="mdt-group">
-        <button className="mdt-btn" title="Zoom avant"   onClick={() => mapRef.current?.zoomIn()}><LuZoomIn  size={16} /></button>
-        <button className="mdt-btn" title="Zoom arrière" onClick={() => mapRef.current?.zoomOut()}><LuZoomOut size={16} /></button>
-        <button className="mdt-btn" title="Recentrer sur la parcelle" onClick={recenter}><LuLocate size={16} /></button>
+        <button className="mdt-btn" title="Zoom avant"               onClick={() => mapRef.current?.zoomIn()}><LuZoomIn  size={14} /></button>
+        <button className="mdt-btn" title="Zoom arrière"             onClick={() => mapRef.current?.zoomOut()}><LuZoomOut size={14} /></button>
+        <button className="mdt-btn" title="Recentrer sur la parcelle" onClick={recenter}><LuLocate size={14} /></button>
       </div>
 
       <div className="mdt-divider" />
 
-      {/* Dessin */}
+      {/* Dessin / Sélection */}
       <div className="mdt-group">
-        <T icon={<LuPentagon size={16} />} title="Polygone libre"   cls="leaflet-draw-draw-polygon"   toolId="polygon"   />
-        <T icon={<LuSquare   size={16} />} title="Rectangle"        cls="leaflet-draw-draw-rectangle"  toolId="rectangle" />
-        <T icon={<LuMapPin   size={16} />} title="Point / Marqueur" cls="leaflet-draw-draw-marker"     toolId="marker"    />
+        <T icon={<LuPentagon size={14} />} title="Polygone libre"   cls="leaflet-draw-draw-polygon"   toolId="polygon"   />
+        <T icon={<LuSquare   size={14} />} title="Rectangle"        cls="leaflet-draw-draw-rectangle"  toolId="rectangle" />
+        <T icon={<LuMapPin   size={14} />} title="Point / Marqueur" cls="leaflet-draw-draw-marker"     toolId="marker"    />
       </div>
 
       <div className="mdt-divider" />
 
       {/* Édition */}
       <div className="mdt-group">
-        <T icon={<LuPencil size={16} />} title="Éditer la sélection"    cls="leaflet-draw-edit-edit"   toolId="edit"   />
-        <T icon={<LuTrash2 size={16} />} title="Supprimer la sélection" cls="leaflet-draw-edit-remove" toolId="delete" />
+        <T icon={<LuPencil size={14} />} title="Éditer la sélection"    cls="leaflet-draw-edit-edit"   toolId="edit"   />
+        <T icon={<LuTrash2 size={14} />} title="Supprimer la sélection" cls="leaflet-draw-edit-remove" toolId="delete" />
+      </div>
+
+      <div className="mdt-divider" />
+
+      {/* Outils SIG */}
+      <div className="mdt-group">
+        <T icon={<LuRuler    size={14} />} title="Mesure distance"  cls="leaflet-draw-draw-polyline" toolId="polyline"       />
+        <T icon={<LuPentagon size={14} />} title="Mesure surface"   cls="leaflet-draw-draw-polygon"  toolId="polygon-measure"/>
+        <button
+          className={`mdt-btn${showCoords ? ' active' : ''}`}
+          title="Coordonnées curseur"
+          onClick={() => setShowCoords(v => !v)}
+        >
+          <LuCrosshair size={14} />
+        </button>
+        <button
+          className={`mdt-btn${showGraticule ? ' active' : ''}`}
+          title="Grille de coordonnées"
+          onClick={() => setShowGraticule(v => !v)}
+        >
+          <LuGrid3X3 size={14} />
+        </button>
       </div>
     </div>
   )
 }
 
 
-export default function TreeMap({
+const TreeMap = React.memo(function TreeMap({
   geojson,
   activeStress = ['aucun', 'faible', 'modere', 'eleve', 'severe'],
   isCompareMode = false,
@@ -547,9 +811,9 @@ export default function TreeMap({
           pointer-events: none;
         }
         .anomaly-dot {
-          width: 12px; height: 12px; background: #e74c3c;
+          width: 12px; height: 12px; background: #bf3226;
           border-radius: 50%; border: 2px solid white;
-          box-shadow: 0 0 6px rgba(231,76,60,0.55);
+          box-shadow: 0 0 6px rgba(191,50,38,0.55);
           position: absolute; top: 50%; left: 50%;
           transform: translate(-50%,-50%);
         }
@@ -569,7 +833,7 @@ export default function TreeMap({
     className: '',
     html: `<div style="
       width:30px;height:30px;border-radius:50%;
-      background:#f39c12;border:3px solid white;
+      background:#e67e22;border:3px solid rgba(255,255,255,0.9);
       box-shadow:0 2px 10px rgba(0,0,0,0.4);
       display:flex;align-items:center;justify-content:center;
       font-size:15px;cursor:grab;
@@ -580,13 +844,17 @@ export default function TreeMap({
 
   // Cache de l'historique : { [treeId]: data[] }
   const historyCache = useRef({})
-  const [, forceUpdate] = useState(0)
+  const [historyTick, setHistoryTick] = useState(0)
 
   // Split screen — ref seulement, pas de state, zéro re-render pendant le glissement
   const splitPosRef = useRef(50)
   const isDragging  = useRef(false)
   const wrapperRef  = useRef(null)
-  const mapRef      = useRef(null)   // instance Leaflet Map
+  const mapRef         = useRef(null)   // instance Leaflet Map
+  const allFeaturesRef = useRef(geojson?.features ?? [])
+  const [capturing, setCapturing] = useState(false)
+  const [selectedTreeId, setSelectedTreeId] = useState(null)
+  const [parcelInfoOpen, setParcelInfoOpen] = useState(false)
 
   // ── Web Worker — géotraitements asynchrones (IDW, K-Means, TSP) ───────────
   // Le worker tourne dans un thread V8 séparé : aucun blocage du Main Thread.
@@ -607,10 +875,19 @@ export default function TreeMap({
   const [show3D,            setShow3D]            = useState(false)
   const [deck3DInitialState, setDeck3DInitialState] = useState(null)
 
+  // ── Outils SIG ────────────────────────────────────────────────────────────
+  const [showCoords,    setShowCoords]    = useState(false)
+  const [showGraticule, setShowGraticule] = useState(false)
+  const [cursorCoords,  setCursorCoords]  = useState(null)
+  const [measureResult, setMeasureResult] = useState(null)
+
   // ── Gestion des couches (LayerDrawer) ─────────────────────────────────────
   const [activeBasemap,    setActiveBasemap]    = useState('satellite')
   const [activeOverlays,   setActiveOverlays]   = useState(['polygones'])
   const [overlayOpacities, setOverlayOpacities] = useState({ rgb: 1, thermal: 1 })
+
+  // ── Mode comparaison : vue par défaut = stress coloré (pas l'orthophoto brute) ──
+  const [compareView, setCompareView] = useState('stress') // 'stress' | 'ortho'
 
   function toggleOverlay(id) {
     setActiveOverlays(prev =>
@@ -632,6 +909,46 @@ export default function TreeMap({
     setShow3D(true)
   }
 
+  // Sync allFeaturesRef avec geojson pour que DrawControl ait toujours les données fraîches
+  useEffect(() => {
+    allFeaturesRef.current = geojson?.features ?? []
+  }, [geojson])
+
+  async function captureMap() {
+    if (capturing) return
+    setCapturing(true)
+    try {
+      await new Promise(r => setTimeout(r, 600))
+      const element = wrapperRef.current
+      if (!element) return
+      const canvas = await html2canvas(element, {
+        useCORS:         true,
+        allowTaint:      false,
+        backgroundColor: '#0f172a',
+        scale:            2,
+        logging:          false,
+        ignoreElements: (el) =>
+          el.classList?.contains('mdt-toolbar') ||
+          el.classList?.contains('map-toggle-group') ||
+          el.classList?.contains('map-top-right-group') ||
+          el.classList?.contains('sig-measure-result') ||
+          el.classList?.contains('sig-coords-display') ||
+          el.classList?.contains('sig-parcel-info') ||
+          el.classList?.contains('leaflet-control-container'),
+      })
+      const timestamp = new Date().toISOString().slice(0, 10)
+      const filename  = `GeoOlive_carte_${timestamp}.png`
+      const link = document.createElement('a')
+      link.download = filename
+      link.href     = canvas.toDataURL('image/png', 1.0)
+      link.click()
+    } catch (err) {
+      console.warn('[captureMap] Erreur :', err)
+    } finally {
+      setCapturing(false)
+    }
+  }
+
   // Initialise le worker une fois au montage ; le termine au démontage.
   useEffect(() => {
     const w = new Worker(
@@ -639,8 +956,10 @@ export default function TreeMap({
       { type: 'module' }
     )
     workerRef.current = w
+    console.log('[Worker Debug] Worker initialisé:', w)
 
     w.onmessage = ({ data: { type, result, reqId } }) => {
+      console.log('[Worker Debug] Message reçu:', type, '| reqId:', reqId, '| latest TSP:', latestReqId.current.TSP)
       if (type === 'IDW_RESULT' && reqId === latestReqId.current.IDW) {
         setIdwGrid(result)
         setPendingCalcs(s => { const n = new Set(s); n.delete('IDW'); return n })
@@ -648,7 +967,8 @@ export default function TreeMap({
         setSectorPolygons(result)
         setPendingCalcs(s => { const n = new Set(s); n.delete('KMEANS'); return n })
       } else if (type === 'TSP_RESULT' && reqId === latestReqId.current.TSP) {
-        setRouteResult(result)
+        console.log('[TSP Debug] Résultat reçu du worker:', result)
+        setRouteResult({ ...result, _reqId: reqId })
         setPendingCalcs(s => { const n = new Set(s); n.delete('TSP'); return n })
       } else if (type === 'HEXBIN_RESULT' && reqId === latestReqId.current.HEXBIN) {
         setHexbinGrid(result)
@@ -657,7 +977,7 @@ export default function TreeMap({
       // Les résultats avec un reqId inférieur au dernier connu sont silencieusement ignorés.
     }
 
-    w.onerror = (e) => console.error('[geoWorker]', e.message)
+    w.onerror = (err) => console.error('[Worker Debug] ERREUR dans le worker:', err.message, err)
 
     return () => w.terminate()
   }, [])
@@ -735,6 +1055,13 @@ export default function TreeMap({
 
     const reqId = ++latestReqId.current.TSP
     setPendingCalcs(s => new Set(s).add('TSP'))
+    console.log('[TSP Debug] Envoi au worker:', {
+      targetFeaturesCount: targetFeatures.length,
+      routeStart,
+      routeMaxTrees,
+      routeTarget,
+      reqId,
+    })
     workerRef.current?.postMessage({
       type: 'TSP',
       payload: {
@@ -751,12 +1078,22 @@ export default function TreeMap({
     fetchTreeHistory(treeId)
       .then(data => {
         historyCache.current[treeId] = data
-        forceUpdate(n => n + 1)
+        setHistoryTick(n => n + 1)
       })
       .catch(() => {
         historyCache.current[treeId] = []
       })
   }, [])
+
+  // Réinitialise la vue comparaison en mode stress dès qu'on sort du mode comparaison
+  useEffect(() => {
+    if (!isCompareMode) setCompareView('stress')
+  }, [isCompareMode])
+
+  // Désélectionne l'arbre courant à chaque changement de mission
+  useEffect(() => {
+    setSelectedTreeId(null)
+  }, [currentId])
 
   // Initialise le clip-path à 50 % dès l'activation du mode comparaison.
   // setTimeout(0) garantit que les <Pane> enfants ont fini leur montage.
@@ -769,18 +1106,24 @@ export default function TreeMap({
       const pct       = splitPosRef.current
       const leftPane  = mapRef.current?.getPane('left-pane')
       const rightPane = mapRef.current?.getPane('right-pane')
-      if (leftPane)  leftPane.style.clipPath  = `inset(0 ${100 - pct}% 0 0)`
-      if (rightPane) rightPane.style.clipPath = `inset(0 0 0 ${pct}%)`
+      if (leftPane) {
+        leftPane.style.clipPath  = `inset(0 ${100 - pct}% 0 0)`
+        leftPane.style.transform = 'translateZ(0)'   // GPU compositing → élimine coutures de tuiles
+      }
+      if (rightPane) {
+        rightPane.style.clipPath = `inset(0 0 0 ${pct}%)`
+        rightPane.style.transform = 'translateZ(0)'
+      }
     }, 0)
     return () => clearTimeout(timer)
   }, [isCompareMode])
 
   // Glisser-déposer du séparateur — manipulation DOM directe, 0 setState → 60 fps
   useEffect(() => {
-    function onMouseMove(e) {
+    function applySplit(clientX) {
       if (!isDragging.current || !wrapperRef.current) return
       const rect = wrapperRef.current.getBoundingClientRect()
-      const pct  = Math.min(Math.max((e.clientX - rect.left) / rect.width * 100, 10), 90)
+      const pct  = Math.min(Math.max((clientX - rect.left) / rect.width * 100, 10), 90)
       splitPosRef.current = pct
 
       // Panes Leaflet — clip-path direct
@@ -797,12 +1140,20 @@ export default function TreeMap({
       if (labelLeft)  labelLeft.style.left  = `${pct / 2}%`
       if (labelRight) labelRight.style.left = `${pct + (100 - pct) / 2}%`
     }
-    function onMouseUp() { isDragging.current = false }
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup',  onMouseUp)
+    function onMouseMove(e)  { applySplit(e.clientX) }
+    function onTouchMove(e)  { if (e.touches[0]) applySplit(e.touches[0].clientX) }
+    function onMouseUp()     { isDragging.current = false }
+    function onTouchEnd()    { isDragging.current = false }
+
+    window.addEventListener('mousemove',  onMouseMove)
+    window.addEventListener('mouseup',    onMouseUp)
+    window.addEventListener('touchmove',  onTouchMove, { passive: true })
+    window.addEventListener('touchend',   onTouchEnd)
     return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup',  onMouseUp)
+      window.removeEventListener('mousemove',  onMouseMove)
+      window.removeEventListener('mouseup',    onMouseUp)
+      window.removeEventListener('touchmove',  onTouchMove)
+      window.removeEventListener('touchend',   onTouchEnd)
     }
   }, [])
 
@@ -842,73 +1193,108 @@ export default function TreeMap({
   }, [yieldPredictions])
 
   const KNOWN_CLASSES = new Set(['aucun', 'faible', 'modere', 'eleve', 'severe'])
-  const visibleFeatures = (geojson?.features ?? []).filter(f => {
-    const s = f.properties.stress
-    if (!s || !KNOWN_CLASSES.has(s)) return true   // inconnu / héritage → toujours visible
-    return activeStress.includes(s)
-  })
-  const visibleCompareFeatures = (geojsonCompare?.features ?? []).filter(f => {
-    const s = f.properties.stress
-    if (!s || !KNOWN_CLASSES.has(s)) return true
-    return activeStress.includes(s)
-  })
+  const visibleFeatures = useMemo(() => {
+    if (!geojson?.features) return []
+    return geojson.features.filter(f => {
+      const s = f.properties?.stress
+      if (!s || !KNOWN_CLASSES.has(s)) return true
+      return activeStress.includes(s)
+    })
+  }, [geojson, activeStress])
+  const visibleCompareFeatures = useMemo(() => {
+    if (!geojsonCompare?.features) return []
+    return geojsonCompare.features.filter(f => {
+      const s = f.properties?.stress
+      if (!s || !KNOWN_CLASSES.has(s)) return true
+      return activeStress.includes(s)
+    })
+  }, [geojsonCompare, activeStress])
+
+  // Plage de circonférence estimée (cm) dérivée de la plage de hauteur
+  const circRange = useMemo(() => {
+    const [hMin, hMax] = dataRanges.hauteur
+    return [
+      Math.floor(Math.PI * hMin * 0.6 * 100),
+      Math.ceil(Math.PI  * hMax * 0.6 * 100),
+    ]
+  }, [dataRanges.hauteur])
+
+  // Info statique de la parcelle courante (centroïde, surface convexe, nombre d'arbres)
+  const parcelInfo = useMemo(() => {
+    if (!geojson?.features?.length) return null
+    try {
+      const fc       = turf.featureCollection(geojson.features)
+      const centroid = turf.centroid(fc)
+      const hull     = turf.convex(fc)
+      const surface  = hull ? (turf.area(hull) / 10000).toFixed(2) : '—'
+      const [lng, lat] = centroid.geometry.coordinates
+      return { lat: lat.toFixed(5), lng: lng.toFixed(5), surface, n: geojson.features.length }
+    } catch { return null }
+  }, [geojson])
 
   function vulnerabilityToColor(score) {
     if (score == null) return '#64748b'
-    if (score < 20)   return '#22c55e'
-    if (score < 40)   return '#84cc16'
-    if (score < 60)   return '#f59e0b'
-    if (score < 80)   return '#ef4444'
-    return '#7c3aed'
+    if (score < 20)   return '#3d9960'
+    if (score < 40)   return '#a89520'
+    if (score < 60)   return '#c96e1c'
+    if (score < 80)   return '#bf3226'
+    return '#7b3e97'
   }
 
-  // applySelection=true uniquement pour la mission courante (pas le panneau de comparaison)
-  function renderMarkers(features, pane, applySelection = false) {
+  const renderedMarkers = useMemo(() => {
+    if (isCompareMode) return null
+    const features = (geojson?.features ?? []).filter(f => {
+      const s = f.properties?.stress
+      if (!s || !KNOWN_CLASSES.has(s)) return true
+      return activeStress.includes(s)
+    })
     return features.map((feat, index) => {
       if (!feat.geometry?.coordinates) return null
 
-      const p         = feat.properties
-      const yieldKg   = mapMode === 'yield' ? (yieldPredictions?.[p.id] ?? null) : null
-      const color     = mapMode === 'yield'
+      const p       = feat.properties
+      const yieldKg = mapMode === 'yield' ? (yieldPredictions?.[p.id] ?? null) : null
+      const color   = mapMode === 'yield'
         ? yieldToColor(yieldKg)
         : showMCDA && mcdaScores[p.id] != null
           ? vulnerabilityToColor(mcdaScores[p.id])
           : STRESS_COLORS[p.stress] || STRESS_COLORS.inconnu
-      const key       = `${pane ?? 'default'}-${p.id != null ? p.id : index}`
-      const history   = historyCache.current[p.id]
-      const paneProps = pane ? { pane } : { pane: 'markerPane' }
+      const key     = `markerPane-${p.id != null ? p.id : index}`
+      const history = historyCache.current[p.id]
 
-      // Dimming : filtre IA actif OU arbre hors-sélection → quasi-transparent
       const aiDimmed = isFilteredOut(p, mapFilter, yieldPredictions, yieldAvg)
-      const dimmed   = aiDimmed || (applySelection && hasSelection && !selectedIds.has(p.id))
+      const dimmed   = aiDimmed || (hasSelection && !selectedIds.has(p.id))
       const fillO    = dimmed ? 0.10 : 0.92
       const strokeO  = dimmed ? 0.08 : 1
 
       if (feat.geometry.type === 'Point') {
+        const isSelected = p.id === selectedTreeId
         return (
           <CircleMarker
             key={key}
             center={[feat.geometry.coordinates[1], feat.geometry.coordinates[0]]}
-            radius={8}
+            radius={isSelected ? 14 : 8}
             pathOptions={{
-              color: dimmed ? 'rgba(255,255,255,0.15)' : '#1e293b',
-              weight: 1.5,
-              fillColor: color,
+              color:       isSelected ? '#ffffff' : (dimmed ? 'rgba(255,255,255,0.15)' : '#1e293b'),
+              weight:      isSelected ? 3 : 1.5,
+              fillColor:   color,
               fillOpacity: fillO,
-              opacity: strokeO,
+              opacity:     strokeO,
             }}
-            {...paneProps}
+            pane="markerPane"
             eventHandlers={{
-              click:     () => fetchHistory(p.id),
+              click: () => {
+                fetchHistory(p.id)
+                setSelectedTreeId(prev => prev === p.id ? null : p.id)
+              },
               mouseover: e => {
                 if (dimmed) return
-                e.target.setRadius(13)
-                e.target.setStyle({ weight: 2.5, color: '#1e293b' })
+                e.target.setRadius(isSelected ? 14 : 13)
+                e.target.setStyle({ weight: 2.5 })
               },
               mouseout: e => {
                 if (dimmed) return
-                e.target.setRadius(8)
-                e.target.setStyle({ weight: 1.5, color: '#1e293b' })
+                e.target.setRadius(isSelected ? 14 : 8)
+                e.target.setStyle({ weight: isSelected ? 3 : 1.5 })
               },
             }}
           >
@@ -923,11 +1309,13 @@ export default function TreeMap({
             key={key}
             positions={reverseCoordinates(feat.geometry.coordinates)}
             pathOptions={{
-              stroke:      false,
+              stroke:      !dimmed,
+              color:       '#1e293b',
+              weight:      0.8,
               fillColor:   color,
-              fillOpacity: dimmed ? 0.08 : 1,
+              fillOpacity: dimmed ? 0.08 : 0.90,
             }}
-            {...paneProps}
+            pane="markerPane"
             eventHandlers={{
               click: () => fetchHistory(p.id),
             }}
@@ -939,7 +1327,21 @@ export default function TreeMap({
 
       return null
     })
-  }
+  }, [
+    isCompareMode,
+    geojson,
+    activeStress,
+    mapMode,
+    yieldPredictions,
+    showMCDA,
+    mcdaScores,
+    mapFilter,
+    yieldAvg,
+    selectedIds,
+    hasSelection,
+    historyTick,
+    selectedTreeId,
+  ])
 
   return (
     <div ref={wrapperRef} style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -951,8 +1353,10 @@ export default function TreeMap({
         zoomControl={false}
         style={{ height: '100%', width: '100%' }}
       >
-        <MapController geojson={geojson} flyToTree={flyToTree} />
-        <DrawControl allFeatures={geojson?.features ?? []} setSelectedTrees={setSelectedTrees} />
+        <MapController geojson={geojson} flyToTree={flyToTree} currentId={currentId} />
+        <DrawControl allFeaturesRef={allFeaturesRef} setSelectedTrees={setSelectedTrees} setMeasureResult={setMeasureResult} />
+        <CursorCoords active={showCoords} onMove={setCursorCoords} />
+        <Graticule visible={showGraticule} />
 
 
         {isCompareMode && (
@@ -971,44 +1375,75 @@ export default function TreeMap({
           attribution={BASEMAPS[activeBasemap].attribution}
         />
 
-        {/* ── Orthomosaïque RGB — mission courante ── */}
-        {currentId && currentMission?.ortho_formats?.rgb === 'zip' && activeOverlays.includes('rgb') && (
+        {/* ── Orthomosaïque RGB — mission courante ──
+            En mode comparaison : seulement si vue 'ortho' sélectionnée */}
+        {currentId && currentMission?.ortho_formats?.rgb === 'zip' && activeOverlays.includes('rgb') &&
+         (!isCompareMode || compareView === 'ortho') && (
           <TileLayer
-            url={`http://localhost:8000/tiles/${currentId}/rgb_tiles/{z}/{x}/{y}.png`}
+            url={`${API}/tiles/${currentId}/rgb_tiles/{z}/{x}/{y}.png`}
             maxZoom={24} maxNativeZoom={20} opacity={overlayOpacities.rgb ?? 1}
             pane={isCompareMode ? 'left-pane' : 'overlayPane'}
           />
         )}
 
         {/* ── Orthomosaïque Thermique — mission courante ── */}
-        {currentId && currentMission?.has_thermal_zip && activeOverlays.includes('thermal') && (
+        {currentId && currentMission?.has_thermal_zip && activeOverlays.includes('thermal') &&
+         (!isCompareMode || compareView === 'ortho') && (
           <TileLayer
-            url={`http://localhost:8000/tiles/${currentId}/thermal/{z}/{x}/{y}.png`}
+            url={`${API}/tiles/${currentId}/thermal/{z}/{x}/{y}.png`}
             maxZoom={24} maxNativeZoom={20} opacity={overlayOpacities.thermal ?? 1}
             pane={isCompareMode ? 'left-pane' : 'overlayPane'}
           />
         )}
 
-        {/* ── Orthomosaïques mission comparée ── */}
-        {isCompareMode && compareId && compareMission?.ortho_formats?.rgb === 'zip' && (
+        {/* ── Orthomosaïques mission comparée — seulement en vue 'ortho' ── */}
+        {isCompareMode && compareView === 'ortho' && compareId && compareMission?.ortho_formats?.rgb === 'zip' && (
           <TileLayer
-            url={`http://localhost:8000/tiles/${compareId}/rgb_tiles/{z}/{x}/{y}.png`}
+            url={`${API}/tiles/${compareId}/rgb_tiles/{z}/{x}/{y}.png`}
             maxZoom={24} maxNativeZoom={20} pane="right-pane"
           />
         )}
-        {isCompareMode && compareId && compareMission?.has_thermal_zip && (
+        {isCompareMode && compareView === 'ortho' && compareId && compareMission?.has_thermal_zip && (
           <TileLayer
-            url={`http://localhost:8000/tiles/${compareId}/thermal/{z}/{x}/{y}.png`}
+            url={`${API}/tiles/${compareId}/thermal/{z}/{x}/{y}.png`}
             maxZoom={24} maxNativeZoom={20} opacity={1} pane="right-pane"
           />
         )}
 
-        {/* ── Polygones oliviers ── */}
-        {geojson && activeOverlays.includes('polygones') && (
-          <LayerGroup>
-            {renderMarkers(visibleFeatures, isCompareMode ? 'left-pane' : 'markerPane', true)}
-            {isCompareMode && renderMarkers(visibleCompareFeatures, 'right-pane', false)}
-          </LayerGroup>
+        {/* ── Polygones oliviers — mode NORMAL ── */}
+        {!isCompareMode && geojson && activeOverlays.includes('polygones') && (
+          <MarkerClusterGroup
+            chunkedLoading
+            maxClusterRadius={40}
+            disableClusteringAtZoom={17}
+            spiderfyOnMaxZoom={true}
+            iconCreateFunction={createClusterIcon}
+          >
+            {renderedMarkers}
+          </MarkerClusterGroup>
+        )}
+
+        {/* ── Comparaison — vue Stress CWSI ──
+            Utilise <GeoJSON> natif plutôt qu'une liste de <CircleMarker>/<Polygon>.
+            L.GeoJSON propage l'option `pane` à tous ses sous-layers (polygones ET points),
+            garantissant leur placement dans le bon pane Leaflet dès la création. */}
+        {isCompareMode && compareView === 'stress' && geojson && (
+          <GeoJSON
+            key={`cmp-l-${currentId}-${visibleFeatures.length}-${activeStress.length}`}
+            data={{ type: 'FeatureCollection', features: visibleFeatures }}
+            style={cmpStressStyle}
+            pointToLayer={cmpPtLeft}
+            pane="left-pane"
+          />
+        )}
+        {isCompareMode && compareView === 'stress' && geojsonCompare && (
+          <GeoJSON
+            key={`cmp-r-${compareId}-${visibleCompareFeatures.length}-${activeStress.length}`}
+            data={{ type: 'FeatureCollection', features: visibleCompareFeatures }}
+            style={cmpStressStyle}
+            pointToLayer={cmpPtRight}
+            pane="right-pane"
+          />
         )}
 
         {/* ── Hexbin : z405, entre ortho et secteurs ── */}
@@ -1057,11 +1492,12 @@ export default function TreeMap({
 
         {/* ── Tournée d'inspection : z470, au-dessus des hotspots, sous les markers ── */}
         <Pane name="route-pane" style={{ zIndex: 470 }} />
+        {routeResult && console.log('[Render Debug] Rendu route — geometry.type:', routeResult.line?.geometry?.type, '| coords sample:', routeResult.line?.geometry?.coordinates?.[0])}
         {routeResult && (
           <GeoJSON
-            key={`route-${routeResult.count}-${geojson?.features?.length ?? 0}`}
+            key={`route-${routeResult._reqId}`}
             data={routeResult.line}
-            style={{ color: '#f39c12', weight: 4, dashArray: '8, 8', opacity: 0.9 }}
+            style={{ color: '#ff4d4d', weight: 6, opacity: 1, dashArray: '12, 10', lineCap: 'round' }}
             pane="route-pane"
           />
         )}
@@ -1110,7 +1546,7 @@ export default function TreeMap({
                   <div className="custom-popup">
                     <div className="popup-header">
                       <span className="popup-title">⚠ Anomalie #{a.id}</span>
-                      <span className="stress-badge" style={{ backgroundColor: '#e74c3c' }}>
+                      <span className="stress-badge" style={{ backgroundColor: STRESS_COLORS[a.stress] ?? '#7e8c80' }}>
                         {STRESS_LABELS[a.stress] ?? a.stress}
                       </span>
                     </div>
@@ -1118,7 +1554,7 @@ export default function TreeMap({
                       <div className="popup-cell">
                         <span className="popup-cell-icon"><LuDroplet size={16} /></span>
                         <span className="popup-cell-label">CWSI</span>
-                        <span className="popup-cell-value" style={{ color: '#e74c3c' }}>
+                        <span className="popup-cell-value" style={{ color: '#bf3226' }}>
                           {a.cwsi.toFixed(3)}
                         </span>
                       </div>
@@ -1139,7 +1575,7 @@ export default function TreeMap({
                     </div>
                     <div style={{ padding: '6px 0 2px', fontSize: 11, color: 'var(--text-muted)' }}>
                       Score d'anomalie :&nbsp;
-                      <span style={{ color: '#e74c3c', fontWeight: 700 }}>
+                      <span style={{ color: '#bf3226', fontWeight: 700 }}>
                         {a.anomaly_score.toFixed(4)}
                       </span>
                     </div>
@@ -1152,58 +1588,82 @@ export default function TreeMap({
 
       </MapContainer>
 
-      {/* ── Toolbar dessin custom ── */}
-      <MapDrawToolbar mapRef={mapRef} geojson={geojson} />
+      {/* ── Toolbar dessin + outils SIG ── */}
+      <MapDrawToolbar
+        mapRef={mapRef}
+        geojson={geojson}
+        showCoords={showCoords}
+        setShowCoords={setShowCoords}
+        showGraticule={showGraticule}
+        setShowGraticule={setShowGraticule}
+      />
 
-      {/* ── LayerDrawer — coin supérieur droit ── */}
-      {(() => {
-        const availableOverlays = [
-          { id: 'polygones', label: "Polygones oliviers", icon: <LuTreePine size={13} />, color: '#22c55e', hasOpacity: false },
-          ...(currentId && currentMission?.ortho_formats?.rgb === 'zip'
-            ? [{ id: 'rgb', label: 'Orthomosaïque RGB', icon: <LuSatellite size={13} />, color: '#0ea5e9', hasOpacity: true }]
-            : []),
-          ...(currentId && currentMission?.has_thermal_zip
-            ? [{ id: 'thermal', label: 'Raster thermique', icon: <LuThermIcon size={13} />, color: '#f97316', hasOpacity: true }]
-            : []),
-        ]
-        return (
-          <div className="map-layer-drawer-wrap">
-            <LayerDrawer
-              activeBasemap={activeBasemap}
-              onBasemapChange={setActiveBasemap}
-              activeOverlays={activeOverlays}
-              onOverlayToggle={toggleOverlay}
-              overlayOpacities={overlayOpacities}
-              onOpacityChange={setOpacity}
-              availableOverlays={availableOverlays}
-            />
-          </div>
-        )
-      })()}
-
-      {/* ── Bouton Vue 3D — coin inférieur gauche, au-dessus du bouton anomalie ── */}
-      {geojson?.features?.length > 0 && (
+      {/* ── Zone C : Capturer + LayerDrawer côte à côte — coin supérieur droit ── */}
+      <div className="map-top-right-group">
         <button
-          className={`btn-3d-view${show3D ? ' active' : ''}`}
-          onClick={handle3DToggle}
+          className={`btn-capture-map${capturing ? ' capturing' : ''}`}
+          onClick={captureMap}
+          disabled={capturing}
+          title="Capturer la carte en PNG"
         >
-          {show3D ? '✕ Vue 3D' : '🏔 Vue 3D'}
+          {capturing
+            ? <><span className="capture-spinner" /> Export…</>
+            : <>📸 Capturer</>
+          }
         </button>
-      )}
+        {(() => {
+          const availableOverlays = [
+            { id: 'polygones', label: "Polygones oliviers", icon: <LuTreePine size={13} />, color: '#3d9960', hasOpacity: false },
+            ...(currentId && currentMission?.ortho_formats?.rgb === 'zip'
+              ? [{ id: 'rgb', label: 'Orthomosaïque RGB', icon: <LuSatellite size={13} />, color: '#0ea5e9', hasOpacity: true }]
+              : []),
+            ...(currentId && currentMission?.has_thermal_zip
+              ? [{ id: 'thermal', label: 'Raster thermique', icon: <LuThermIcon size={13} />, color: '#f97316', hasOpacity: true }]
+              : []),
+          ]
+          return (
+            <div className="map-layer-drawer-wrap">
+              <LayerDrawer
+                activeBasemap={activeBasemap}
+                onBasemapChange={setActiveBasemap}
+                activeOverlays={activeOverlays}
+                onOverlayToggle={toggleOverlay}
+                overlayOpacities={overlayOpacities}
+                onOpacityChange={setOpacity}
+                availableOverlays={availableOverlays}
+              />
+            </div>
+          )
+        })()}
+      </div>
 
-      {/* ── Bouton toggle anomalies — coin inférieur gauche ── */}
-      <button
-        className={`anomaly-map-btn${showAnomalies ? ' active' : ''}`}
-        onClick={onToggleAnomalies}
-        disabled={anomalyLoading}
-      >
-        {anomalyLoading
-          ? '⏳ Analyse…'
-          : showAnomalies
-            ? <>🔴 Masquer anomalies{anomalyData && <span className="anomaly-map-badge">{anomalyData.n_anomalies}</span>}</>
-            : '🔍 Afficher les anomalies'
-        }
-      </button>
+      {/* ── Zone B : groupe de toggles visuels — bas gauche ── */}
+      <div className="map-toggle-group">
+        {geojson?.features?.length > 0 && (
+          <button
+            className={`map-toggle-btn${show3D ? ' active' : ''}`}
+            onClick={handle3DToggle}
+            title="Vue 3D des arbres"
+          >
+            🏔 Vue 3D
+          </button>
+        )}
+
+        <MapFilterBar
+          filterCwsi={filterCwsi}
+          onCwsiChange={onCwsiChange}
+          cwsiRange={dataRanges.cwsi}
+          filterHauteur={filterHauteur}
+          onHauteurChange={onHauteurChange}
+          hauteurRange={dataRanges.hauteur}
+          filterCirc={filterCirc}
+          onCircChange={onCircChange}
+          circRange={circRange}
+          onReset={onFilterReset}
+          filteredCount={geojson?.features?.length ?? 0}
+          totalCount={totalCount}
+        />
+      </div>
 
       {/* ── Badge filtre IA — centré en haut de carte ── */}
       {mapFilter && mapFilter.action !== 'reset' && (
@@ -1219,6 +1679,81 @@ export default function TreeMap({
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* ── Résultat de mesure — centré en haut ── */}
+      {measureResult && (
+        <div className="sig-measure-result">
+          <span className="sig-measure-icon">
+            {measureResult.type === 'distance' ? '📐' : '⬡'}
+          </span>
+          <div className="sig-measure-body">
+            <span className="sig-measure-label">
+              {measureResult.type === 'distance' ? 'Distance mesurée' : 'Surface mesurée'}
+            </span>
+            <span className="sig-measure-value">{measureResult.value}</span>
+            {measureResult.extra && (
+              <span className="sig-measure-extra">{measureResult.extra}</span>
+            )}
+          </div>
+          <button className="sig-measure-close" onClick={() => setMeasureResult(null)}>✕</button>
+        </div>
+      )}
+
+      {/* ── Coordonnées curseur — coin inférieur droit ── */}
+      {showCoords && cursorCoords && (
+        <div className="sig-coords-display">
+          <span className="sig-coords-label">📍 Curseur</span>
+          <span className="sig-coords-value">
+            {cursorCoords.lat.toFixed(6)}°N,&nbsp;{cursorCoords.lng.toFixed(6)}°E
+          </span>
+          <span className="sig-coords-dms">
+            {toDMS(cursorCoords.lat, 'N/S')}&nbsp;&nbsp;{toDMS(cursorCoords.lng, 'E/W')}
+          </span>
+        </div>
+      )}
+
+      {/* ── Info-box parcelle — coin inférieur droit ── */}
+      {parcelInfo && (
+        <div className={`sig-parcel-info${parcelInfoOpen ? ' open' : ''}`}>
+          <div
+            className="sig-pi-header"
+            onClick={() => setParcelInfoOpen(v => !v)}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="sig-pi-title">📍 Informations parcelle</span>
+            <span className="sig-pi-chevron">{parcelInfoOpen ? '▲' : '▼'}</span>
+          </div>
+          {parcelInfoOpen && (
+            <div className="sig-pi-grid">
+              <div className="sig-pi-item">
+                <span className="sig-pi-label">Centroïde</span>
+                <span className="sig-pi-val mono">{parcelInfo.lat}°N</span>
+                <span className="sig-pi-val mono">{parcelInfo.lng}°E</span>
+              </div>
+              <div className="sig-pi-item">
+                <span className="sig-pi-label">Surface</span>
+                <span className="sig-pi-val accent">{parcelInfo.surface} ha</span>
+              </div>
+              <div className="sig-pi-item">
+                <span className="sig-pi-label">Arbres</span>
+                <span className="sig-pi-val accent">{parcelInfo.n}</span>
+              </div>
+              <div className="sig-pi-item">
+                <span className="sig-pi-label">Densité</span>
+                <span className="sig-pi-val">
+                  {parcelInfo.surface > 0
+                    ? `${(parcelInfo.n / parcelInfo.surface).toFixed(0)} arb/ha`
+                    : '—'}
+                </span>
+              </div>
+              <div className="sig-pi-item sig-pi-item--full">
+                <span className="sig-pi-label">Projection</span>
+                <span className="sig-pi-val mono">WGS 84 · EPSG:4326</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1257,7 +1792,7 @@ export default function TreeMap({
               {currentLabel}
             </div>
           )}
-          {compareLabel && (
+          {compareLabel ? (
             <div
               id="split-label-right"
               className="split-label"
@@ -1265,12 +1800,43 @@ export default function TreeMap({
             >
               {compareLabel}
             </div>
+          ) : (
+            <div
+              className="split-no-data"
+              style={{ left: '75%', transform: 'translateX(-50%)' }}
+            >
+              Aucune mission sélectionnée
+            </div>
           )}
+          {compareId && !compareMission?.has_shapefile && (
+            <div className="split-no-data" style={{ left: '75%', top: '50%', transform: 'translate(-50%, -50%)' }}>
+              🛰️ Aucune donnée<br />pour cette mission
+            </div>
+          )}
+          {/* ── Toggle vue : Stress CWSI vs Orthophoto ── */}
+          <div className="split-view-toggle">
+            <button
+              className={`split-toggle-btn${compareView === 'stress' ? ' split-toggle-btn--active' : ''}`}
+              onClick={() => setCompareView('stress')}
+              title="Afficher les couleurs de stress CWSI"
+            >
+              Stress CWSI
+            </button>
+            <button
+              className={`split-toggle-btn${compareView === 'ortho' ? ' split-toggle-btn--active' : ''}`}
+              onClick={() => setCompareView('ortho')}
+              title="Afficher l'orthophoto brute"
+            >
+              Orthophoto
+            </button>
+          </div>
+
           <div
             id="split-divider"
             className="split-divider"
             style={{ left: 'calc(50% - 2px)' }}
             onMouseDown={e => { e.preventDefault(); isDragging.current = true }}
+            onTouchStart={e => { e.stopPropagation(); isDragging.current = true }}
           >
             <div className="split-handle">⇔</div>
           </div>
@@ -1278,4 +1844,5 @@ export default function TreeMap({
       )}
     </div>
   )
-}
+})
+export default TreeMap

@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import * as turf from '@turf/turf'
 import { STRESS_COLORS, DEFAULT_CWSI_THRESHOLDS, DEFAULT_SETTINGS, SETTINGS_KEY } from '../constants'
-import { LuCheck, LuRotateCcw, LuArrowLeft } from 'react-icons/lu'
+import { LuCheck, LuRotateCcw, LuArrowLeft, LuPencil, LuX } from 'react-icons/lu'
 import { useToast } from '../hooks/useToast'
 
 const IRRIGATION_TYPES = [
@@ -28,6 +28,8 @@ function loadSettings() {
 export default function ParcelSettings({ geojson, onClose, onSaved }) {
   const toast  = useToast()
   const [form, setForm] = useState(loadSettings)
+  const [editMode, setEditMode] = useState(false)
+  const savedSnapshot = useRef(null)
 
   // ── Auto-calcul depuis le GeoJSON actif ─────────────────────────────────────
   const autoInfo = useMemo(() => {
@@ -46,6 +48,16 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
       return { surface: null, centroid: null }
     }
   }, [geojson])
+
+  function startEdit() {
+    savedSnapshot.current = { ...form, cwsiThresholds: [...form.cwsiThresholds] }
+    setEditMode(true)
+  }
+
+  function cancelEdit() {
+    if (savedSnapshot.current) setForm(savedSnapshot.current)
+    setEditMode(false)
+  }
 
   function set(key, value) {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -76,6 +88,7 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(toSave))
       toast('Paramètres enregistrés', 'success')
       onSaved?.(toSave)
+      setEditMode(false)
       onClose()
     } catch (_) {
       toast('Erreur lors de la sauvegarde', 'error')
@@ -103,10 +116,20 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
           </button>
           <h2 className="ps-page-title">Paramètres de la parcelle</h2>
           <div className="ps-header-actions">
-            <button className="btn-secondary" onClick={onClose}>Annuler</button>
-            <button className="btn-primary" onClick={handleSave}>
-              <LuCheck size={13} /> Enregistrer
-            </button>
+            {editMode ? (
+              <>
+                <button className="btn-secondary" onClick={cancelEdit}>
+                  <LuX size={13} /> Annuler
+                </button>
+                <button className="btn-primary" onClick={handleSave}>
+                  <LuCheck size={13} /> Enregistrer
+                </button>
+              </>
+            ) : (
+              <button className="btn-primary" onClick={startEdit}>
+                <LuPencil size={13} /> Modifier
+              </button>
+            )}
           </div>
         </div>
 
@@ -119,23 +142,35 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
 
               <div className="ps-field">
                 <label className="ps-label">Nom de la parcelle</label>
-                <input className="ps-input" value={form.parcelName}
-                  onChange={e => set('parcelName', e.target.value)}
-                  placeholder="ex : Parcelle Nord" />
+                {editMode ? (
+                  <input className="ps-input" value={form.parcelName}
+                    onChange={e => set('parcelName', e.target.value)}
+                    placeholder="ex : Parcelle Nord" />
+                ) : (
+                  <div className="ps-value-text">{form.parcelName || <span className="ps-value-empty">Non renseigné</span>}</div>
+                )}
               </div>
 
               <div className="ps-field">
                 <label className="ps-label">Propriétaire</label>
-                <input className="ps-input" value={form.owner}
-                  onChange={e => set('owner', e.target.value)}
-                  placeholder="Nom du propriétaire" />
+                {editMode ? (
+                  <input className="ps-input" value={form.owner}
+                    onChange={e => set('owner', e.target.value)}
+                    placeholder="Nom du propriétaire" />
+                ) : (
+                  <div className="ps-value-text">{form.owner || <span className="ps-value-empty">Non renseigné</span>}</div>
+                )}
               </div>
 
               <div className="ps-field">
                 <label className="ps-label">Variété d'olivier</label>
-                <input className="ps-input" value={form.variety}
-                  onChange={e => set('variety', e.target.value)}
-                  placeholder="ex : Picholine marocaine" />
+                {editMode ? (
+                  <input className="ps-input" value={form.variety}
+                    onChange={e => set('variety', e.target.value)}
+                    placeholder="ex : Picholine marocaine" />
+                ) : (
+                  <div className="ps-value-text">{form.variety || <span className="ps-value-empty">Non renseigné</span>}</div>
+                )}
               </div>
 
               <div className="ps-field">
@@ -144,13 +179,14 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
                   {autoInfo.surface && <span className="ps-auto-badge">auto</span>}
                 </label>
                 {autoInfo.surface ? (
-                  <input className="ps-input" value={autoInfo.surface} readOnly
-                    style={{ opacity: 0.7, cursor: 'default' }} />
-                ) : (
+                  <div className="ps-value-text">{autoInfo.surface} ha</div>
+                ) : editMode ? (
                   <input className="ps-input" type="number" min="0" step="0.01"
                     value={form.surface}
                     onChange={e => set('surface', e.target.value)}
                     placeholder="Saisie manuelle (ha)" />
+                ) : (
+                  <div className="ps-value-text">{form.surface ? `${form.surface} ha` : <span className="ps-value-empty">Non renseigné</span>}</div>
                 )}
               </div>
 
@@ -173,10 +209,12 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
           <section className="ps-section">
             <div className="ps-section-hd">
               <h3 className="ps-section-title">Seuils CWSI personnalisables</h3>
-              <button className="ps-reset-btn"
-                onClick={() => setForm(p => ({ ...p, cwsiThresholds: [...DEFAULT_CWSI_THRESHOLDS] }))}>
-                <LuRotateCcw size={11} /> Réinitialiser
-              </button>
+              {editMode && (
+                <button className="ps-reset-btn"
+                  onClick={() => setForm(p => ({ ...p, cwsiThresholds: [...DEFAULT_CWSI_THRESHOLDS] }))}>
+                  <LuRotateCcw size={11} /> Réinitialiser
+                </button>
+              )}
             </div>
 
             {/* Barre de prévisualisation en temps réel */}
@@ -210,7 +248,9 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
                         type="range" className="ps-range"
                         min={minVal} max={maxVal} step={0.01}
                         value={t[i]}
-                        onChange={e => setThreshold(i, e.target.value)}
+                        onChange={e => editMode && setThreshold(i, e.target.value)}
+                        disabled={!editMode}
+                        style={!editMode ? { opacity: 0.55, cursor: 'default', pointerEvents: 'none' } : undefined}
                       />
                       <span className="ps-threshold-val">{t[i].toFixed(2)}</span>
                     </div>
@@ -238,12 +278,16 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
                   <div className="ps-kc-icon">{icon}</div>
                   <div className="ps-kc-label">{label}</div>
                   <div className="ps-kc-hint">{hint}</div>
-                  <input
-                    type="number" className="ps-kc-input"
-                    min="0.10" max="1.50" step="0.01"
-                    value={form[key]}
-                    onChange={e => set(key, parseFloat(e.target.value) || 0)}
-                  />
+                  {editMode ? (
+                    <input
+                      type="number" className="ps-kc-input"
+                      min="0.10" max="1.50" step="0.01"
+                      value={form[key]}
+                      onChange={e => set(key, parseFloat(e.target.value) || 0)}
+                    />
+                  ) : (
+                    <div className="ps-kc-input ps-kc-readonly">{form[key]}</div>
+                  )}
                 </div>
               ))}
             </div>
@@ -258,8 +302,9 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
               {IRRIGATION_TYPES.map(tp => (
                 <button
                   key={tp.value}
-                  className={`ps-irrig-chip${form.irrigationType === tp.value ? ' active' : ''}`}
-                  onClick={() => handleIrrigationType(tp.value)}
+                  className={`ps-irrig-chip${form.irrigationType === tp.value ? ' active' : ''}${!editMode ? ' ps-irrig-chip--readonly' : ''}`}
+                  onClick={() => editMode && handleIrrigationType(tp.value)}
+                  disabled={!editMode}
                 >
                   {tp.label}
                   <span className="ps-irrig-eff">{Math.round(tp.efficiency * 100)} %</span>
@@ -268,30 +313,23 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
             </div>
 
             <div className="ps-form-grid">
-              <div className="ps-field">
-                <label className="ps-label">Débit pompe (m³/h)</label>
-                <input className="ps-input" type="number" min="0" step="0.5"
-                  value={form.pumpFlow}
-                  onChange={e => set('pumpFlow', parseFloat(e.target.value) || 0)} />
-              </div>
-              <div className="ps-field">
-                <label className="ps-label">Coût eau (MAD/m³)</label>
-                <input className="ps-input" type="number" min="0" step="0.1"
-                  value={form.waterCost}
-                  onChange={e => set('waterCost', parseFloat(e.target.value) || 0)} />
-              </div>
-              <div className="ps-field">
-                <label className="ps-label">Conso. pompe (kWh/m³)</label>
-                <input className="ps-input" type="number" min="0" step="0.05"
-                  value={form.energyKwh}
-                  onChange={e => set('energyKwh', parseFloat(e.target.value) || 0)} />
-              </div>
-              <div className="ps-field">
-                <label className="ps-label">Tarif ONEE (MAD/kWh)</label>
-                <input className="ps-input" type="number" min="0" step="0.01"
-                  value={form.energyPrice}
-                  onChange={e => set('energyPrice', parseFloat(e.target.value) || 0)} />
-              </div>
+              {[
+                { key: 'pumpFlow',   label: 'Débit pompe (m³/h)',   step: 0.5,  unit: 'm³/h' },
+                { key: 'waterCost',  label: 'Coût eau (MAD/m³)',    step: 0.1,  unit: 'MAD/m³' },
+                { key: 'energyKwh',  label: 'Conso. pompe (kWh/m³)', step: 0.05, unit: 'kWh/m³' },
+                { key: 'energyPrice',label: 'Tarif ONEE (MAD/kWh)', step: 0.01, unit: 'MAD/kWh' },
+              ].map(({ key, label, step, unit }) => (
+                <div key={key} className="ps-field">
+                  <label className="ps-label">{label}</label>
+                  {editMode ? (
+                    <input className="ps-input" type="number" min="0" step={step}
+                      value={form[key]}
+                      onChange={e => set(key, parseFloat(e.target.value) || 0)} />
+                  ) : (
+                    <div className="ps-value-text">{form[key]} <span className="ps-value-unit">{unit}</span></div>
+                  )}
+                </div>
+              ))}
             </div>
 
             <p className="ps-footnote">Ces valeurs deviennent les défauts dans le simulateur de bilan hydrique.</p>
@@ -299,13 +337,17 @@ export default function ParcelSettings({ geojson, onClose, onSaved }) {
 
         </div>
 
-        {/* ── Pied de page sticky ── */}
-        <div className="ps-footer">
-          <button className="btn-secondary" onClick={onClose}>Annuler</button>
-          <button className="btn-primary" onClick={handleSave}>
-            <LuCheck size={13} /> Enregistrer les paramètres
-          </button>
-        </div>
+        {/* ── Pied de page sticky (mode édition uniquement) ── */}
+        {editMode && (
+          <div className="ps-footer">
+            <button className="btn-secondary" onClick={cancelEdit}>
+              <LuX size={13} /> Annuler
+            </button>
+            <button className="btn-primary" onClick={handleSave}>
+              <LuCheck size={13} /> Enregistrer les paramètres
+            </button>
+          </div>
+        )}
 
       </div>
     </div>

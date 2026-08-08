@@ -2,11 +2,12 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  BarChart, Bar, ScatterChart, Scatter, ZAxis,
+  BarChart, Bar,
 } from 'recharts'
 import { fetchStats, fetchTrees } from '../api'
 import { STRESS_COLORS, STRESS_LABELS } from '../constants'
 import WeatherWidget from './WeatherWidget'
+import BeforeAfterSlider from './BeforeAfterSlider'
 import {
   LuMap, LuLeaf, LuDroplet, LuTriangleAlert, LuTrendingUp,
   LuSatellite, LuArrowRight, LuCalendar, LuArrowUpRight,
@@ -15,11 +16,21 @@ import {
 
 const STRESS_ORDER = ['aucun', 'faible', 'modere', 'eleve', 'severe']
 
+function missionLabel(m) {
+  if (!m) return ''
+  const name = m.nom || m.id || ''
+  if (m.date && !name.includes(m.date)) return `${name} — ${m.date}`
+  return name
+}
+
 const TOOLTIP_STYLE = {
-  background: '#fff',
-  border: '1px solid rgba(99,140,200,0.26)',
+  background: 'rgba(15,23,42,0.97)',
+  border: '1px solid rgba(148,163,184,0.18)',
   borderRadius: 8,
   fontSize: 12,
+  color: '#f1f5f9',
+  boxShadow: '0 4px 20px rgba(0,0,0,0.45)',
+  backdropFilter: 'blur(16px)',
 }
 
 function fmtDate(dateStr) {
@@ -29,23 +40,6 @@ function fmtDate(dateStr) {
   })
 }
 
-function linearRegression(points) {
-  const n = points.length
-  if (n < 2) return null
-  const sumX  = points.reduce((s, p) => s + p.x, 0)
-  const sumY  = points.reduce((s, p) => s + p.y, 0)
-  const sumXY = points.reduce((s, p) => s + p.x * p.y, 0)
-  const sumX2 = points.reduce((s, p) => s + p.x * p.x, 0)
-  const denom = n * sumX2 - sumX * sumX
-  if (Math.abs(denom) < 1e-10) return null
-  const m     = (n * sumXY - sumX * sumY) / denom
-  const b     = (sumY - m * sumX) / n
-  const yMean = sumY / n
-  const ssTot = points.reduce((s, p) => s + (p.y - yMean) ** 2, 0)
-  const ssRes = points.reduce((s, p) => s + (p.y - (m * p.x + b)) ** 2, 0)
-  const r2    = ssTot > 0 ? +(1 - ssRes / ssTot).toFixed(2) : 0
-  return { m: +m.toFixed(4), b: +b.toFixed(4), r2 }
-}
 
 export default function DashboardHome({ missions, onOpenMap }) {
   const [allStats,       setAllStats]       = useState([])
@@ -207,31 +201,6 @@ export default function DashboardHome({ missions, onOpenMap }) {
     return { delta, firstName: first.nom || first.id, lastName: last.nom || last.id }
   }, [filteredStats])
 
-  // ── Scatter plot température × CWSI ─────────────────────────────────────────
-  const scatterData = useMemo(() =>
-    filteredStats
-      .filter(m => m.stats.temperature?.moyenne != null && m.stats.cwsi?.moyenne != null)
-      .map(m => ({
-        x:    +m.stats.temperature.moyenne.toFixed(1),
-        y:    +m.stats.cwsi.moyenne.toFixed(3),
-        name: m.nom || m.id,
-        date: m.date,
-      })),
-    [filteredStats]
-  )
-
-  const regInfo  = useMemo(() => linearRegression(scatterData), [scatterData])
-  const regLine  = useMemo(() => {
-    if (!regInfo || scatterData.length < 2) return []
-    const xs   = scatterData.map(d => d.x)
-    const xMin = Math.min(...xs)
-    const xMax = Math.max(...xs)
-    return [
-      { x: xMin, y: +(regInfo.m * xMin + regInfo.b).toFixed(3) },
-      { x: xMax, y: +(regInfo.m * xMax + regInfo.b).toFixed(3) },
-    ]
-  }, [regInfo, scatterData])
-
   // ── RENDU ────────────────────────────────────────────────────────────────────
   return (
     <div className="dh-page">
@@ -265,7 +234,7 @@ export default function DashboardHome({ missions, onOpenMap }) {
             >
               {missionsSorted.map(m => (
                 <option key={m.id} value={m.id}>
-                  {m.nom || m.id} — {m.date}
+                  {missionLabel(m)}
                 </option>
               ))}
             </select>
@@ -277,7 +246,7 @@ export default function DashboardHome({ missions, onOpenMap }) {
             >
               {missionsSorted.map(m => (
                 <option key={m.id} value={m.id}>
-                  {m.nom || m.id} — {m.date}
+                  {missionLabel(m)}
                 </option>
               ))}
             </select>
@@ -399,10 +368,10 @@ export default function DashboardHome({ missions, onOpenMap }) {
                 <BarChart data={stackedBarData} margin={{ top: 4, right: 8, left: -24, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.3)" vertical={false} />
                   <XAxis
-                    dataKey="name" fontSize={9} tick={{ fill: '#9ab1c8' }}
+                    dataKey="name" fontSize={9} tick={{ fill: '#8ba08e' }}
                     tickLine={false} angle={-20} textAnchor="end" interval={0}
                   />
-                  <YAxis fontSize={9} tick={{ fill: '#9ab1c8' }} tickLine={false} axisLine={false} />
+                  <YAxis fontSize={9} tick={{ fill: '#8ba08e' }} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} />
                   {STRESS_ORDER.map(k => (
                     <Bar key={k} dataKey={k} name={STRESS_LABELS[k]} stackId="a"
@@ -427,15 +396,15 @@ export default function DashboardHome({ missions, onOpenMap }) {
                 <LineChart data={lineData} margin={{ top: 8, right: 12, left: -20, bottom: 28 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.3)" vertical={false} />
                   <XAxis
-                    dataKey="date" fontSize={10} tick={{ fill: '#9ab1c8' }}
+                    dataKey="date" fontSize={10} tick={{ fill: '#8ba08e' }}
                     tickLine={false} angle={-30} textAnchor="end" interval={0}
                   />
-                  <YAxis domain={[0, 1]} fontSize={10} tick={{ fill: '#9ab1c8' }} tickLine={false} axisLine={false} />
+                  <YAxis domain={[0, 1]} fontSize={10} tick={{ fill: '#8ba08e' }} tickLine={false} axisLine={false} />
                   <Tooltip formatter={v => [v?.toFixed(2), 'CWSI moyen']} contentStyle={TOOLTIP_STYLE} />
                   <Line
-                    type="monotone" dataKey="cwsi" stroke="#0e74c6" strokeWidth={2.5}
-                    dot={{ r: 4, fill: '#0e74c6', strokeWidth: 0 }}
-                    activeDot={{ r: 6, fill: '#0e74c6', stroke: '#fff', strokeWidth: 2 }}
+                    type="monotone" dataKey="cwsi" stroke="#4a7c59" strokeWidth={2.5}
+                    dot={{ r: 4, fill: '#4a7c59', strokeWidth: 0 }}
+                    activeDot={{ r: 6, fill: '#4a7c59', stroke: '#fff', strokeWidth: 2 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -444,71 +413,101 @@ export default function DashboardHome({ missions, onOpenMap }) {
             )}
           </div>
 
-          {/* ── Scatter plot Température × CWSI ── */}
+          {/* ── Bilan de la période ── */}
           <div className="dh-card">
             <h3 className="dh-card-title">
-              <LuActivity size={13} /> Corrélation Température × CWSI
+              <LuActivity size={13} /> Bilan de la période
             </h3>
-            {scatterData.length >= 2 ? (
-              <>
-                <ResponsiveContainer width="100%" height={170}>
-                  <ScatterChart margin={{ top: 8, right: 12, left: -20, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.3)" />
-                    <XAxis
-                      type="number" dataKey="x" name="Temp moy (°C)"
-                      domain={['auto', 'auto']}
-                      fontSize={10} tick={{ fill: '#9ab1c8' }} tickLine={false} axisLine={false}
-                      label={{ value: '°C', position: 'insideRight', offset: -4, fontSize: 9, fill: '#9ab1c8' }}
-                    />
-                    <YAxis
-                      type="number" dataKey="y" name="CWSI"
-                      domain={[0, 1]}
-                      fontSize={10} tick={{ fill: '#9ab1c8' }} tickLine={false} axisLine={false}
-                      label={{ value: 'CWSI', angle: -90, position: 'insideLeft', offset: 12, fontSize: 9, fill: '#9ab1c8' }}
-                    />
-                    <ZAxis range={[55, 55]} />
-                    <Tooltip
-                      cursor={{ strokeDasharray: '3 3' }}
-                      contentStyle={TOOLTIP_STYLE}
-                      formatter={(v, n) => [v, n]}
-                      content={({ payload }) => {
-                        if (!payload?.length) return null
-                        const d = payload[0]?.payload
-                        return (
-                          <div style={{ ...TOOLTIP_STYLE, padding: '6px 10px' }}>
-                            <div style={{ fontWeight: 600, marginBottom: 2 }}>{d?.name}</div>
-                            <div>Temp : {d?.x} °C</div>
-                            <div>CWSI : {d?.y}</div>
-                          </div>
-                        )
-                      }}
-                    />
-                    <Scatter name="Missions" data={scatterData} fill="#0e74c6" opacity={0.85} />
-                    {regLine.length === 2 && (
-                      <Scatter
-                        name="Tendance" data={regLine} fill="none"
-                        line={{ stroke: '#f97316', strokeWidth: 2, strokeDasharray: '6 3' }}
-                        shape={({ cx, cy }) => <circle cx={cx} cy={cy} r={0} />}
-                      />
-                    )}
-                  </ScatterChart>
-                </ResponsiveContainer>
-                {regInfo && (
-                  <div className="dh-reg-info">
-                    <span>y = {regInfo.m > 0 ? '+' : ''}{regInfo.m} × T {regInfo.b >= 0 ? '+' : ''}{regInfo.b}</span>
-                    <span className="dh-reg-r2">R² = {regInfo.r2}</span>
+
+            {filteredStats.length >= 1 ? (() => {
+              const first = filteredStats[0]
+              const last  = filteredStats[filteredStats.length - 1]
+
+              const cwsiFirst = first.stats.cwsi?.moyenne
+              const cwsiLast  = last.stats.cwsi?.moyenne
+              const deltaCwsi = cwsiFirst != null && cwsiLast != null
+                ? +(cwsiLast - cwsiFirst).toFixed(3) : null
+
+              const getCritPct = m => {
+                const total = m.stats.total_arbres || 1
+                const crit  = (m.stats.stress_breakdown ?? [])
+                  .filter(s => s.classe === 'eleve' || s.classe === 'severe')
+                  .reduce((n, s) => n + s.count, 0)
+                return Math.round((crit / total) * 100)
+              }
+              const critFirst = getCritPct(first)
+              const critLast  = getCritPct(last)
+              const deltaCrit = critLast - critFirst
+
+              const rows = [
+                {
+                  label: 'CWSI moyen',
+                  first: cwsiFirst?.toFixed(3) ?? '—',
+                  last:  cwsiLast?.toFixed(3)  ?? '—',
+                  delta: deltaCwsi,
+                  unit:  '',
+                  lowerIsBetter: true,
+                },
+                {
+                  label: 'Stress critique',
+                  first: `${critFirst}%`,
+                  last:  `${critLast}%`,
+                  delta: deltaCrit,
+                  unit:  '%',
+                  lowerIsBetter: true,
+                },
+                {
+                  label: 'Arbres totaux',
+                  first: first.stats.total_arbres ?? '—',
+                  last:  last.stats.total_arbres  ?? '—',
+                  delta: null,
+                  unit:  '',
+                  lowerIsBetter: false,
+                },
+              ]
+
+              return (
+                <div className="dh-bilan">
+                  <div className="dh-bilan-header">
+                    <span />
+                    <span className="dh-bilan-col">{first.nom || first.id}</span>
+                    <span className="dh-bilan-col">{last.nom  || last.id}</span>
+                    <span className="dh-bilan-col">Évolution</span>
                   </div>
-                )}
-              </>
-            ) : (
+                  {rows.map(row => (
+                    <div key={row.label} className="dh-bilan-row">
+                      <span className="dh-bilan-label">{row.label}</span>
+                      <span className="dh-bilan-val">{row.first}</span>
+                      <span className="dh-bilan-val">{row.last}</span>
+                      <span className={`dh-bilan-delta ${
+                        row.delta == null ? '' :
+                        row.delta === 0 ? 'neutral' :
+                        (row.lowerIsBetter ? row.delta < 0 : row.delta > 0) ? 'good' : 'bad'
+                      }`}>
+                        {row.delta == null ? '—' :
+                         row.delta === 0  ? '=' :
+                         `${row.delta > 0 ? '▲' : '▼'} ${Math.abs(row.delta)}${row.unit}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })() : (
               <div className="dh-empty">
-                {loading ? 'Chargement…' : scatterData.length < 2
-                  ? 'Au moins 2 missions avec température requises'
-                  : 'Données insuffisantes'
-                }
+                {loading ? 'Chargement…' : 'Données insuffisantes'}
               </div>
             )}
           </div>
+
+          {/* ── Comparaison before/after ── */}
+          {startMission && endMission && startMission.id !== endMission.id && (
+            <div className="dh-card dh-card--full">
+              <h3 className="dh-card-title">
+                <LuTrendingUp size={13} /> Comparaison visuelle — Carte de stress
+              </h3>
+              <BeforeAfterSlider mission1={startMission} mission2={endMission} />
+            </div>
+          )}
 
           {/* ── Alertes prioritaires ── */}
           <div className="dh-card dh-card--full">
@@ -528,9 +527,9 @@ export default function DashboardHome({ missions, onOpenMap }) {
                       <span
                         className="dh-alert-badge"
                         style={{
-                          background: (STRESS_COLORS[t.stress] ?? '#95a5a6') + '22',
-                          color:      STRESS_COLORS[t.stress] ?? '#95a5a6',
-                          border:     `1px solid ${STRESS_COLORS[t.stress] ?? '#95a5a6'}55`,
+                          background: (STRESS_COLORS[t.stress] ?? '#7e8c80') + '22',
+                          color:      STRESS_COLORS[t.stress] ?? '#7e8c80',
+                          border:     `1px solid ${STRESS_COLORS[t.stress] ?? '#7e8c80'}55`,
                         }}
                       >
                         {STRESS_LABELS[t.stress] ?? t.stress}

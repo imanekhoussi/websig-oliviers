@@ -39,10 +39,13 @@ function fmtShort(dateStr) {
 }
 
 const TOOLTIP_STYLE = {
-  background: '#fff',
-  border: '1px solid rgba(99,140,200,0.26)',
+  background: 'rgba(15,23,42,0.97)',
+  border: '1px solid rgba(148,163,184,0.18)',
   borderRadius: 8,
   fontSize: 11,
+  color: '#f1f5f9',
+  backdropFilter: 'blur(16px)',
+  boxShadow: '0 4px 20px rgba(0,0,0,0.45)',
 }
 
 export default function WeatherWidget({ geojson, startDate, endDate }) {
@@ -165,7 +168,7 @@ export default function WeatherWidget({ geojson, startDate, endDate }) {
       >
         <div className="ww-header-left">
           <LuCloudSun size={12} className="ww-icon-main" />
-          <span className="ww-location">Météo Parcelle</span>
+          <span className="ww-location">Météo du jour</span>
         </div>
 
         {current && (
@@ -232,12 +235,12 @@ export default function WeatherWidget({ geojson, startDate, endDate }) {
                   <ComposedChart data={historical} margin={{ top: 6, right: 38, left: -24, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" vertical={false} />
                     <XAxis
-                      dataKey="label" fontSize={9} tick={{ fill: '#9ab1c8' }}
+                      dataKey="label" fontSize={9} tick={{ fill: '#8ba08e' }}
                       tickLine={false} interval={xInterval}
                     />
                     <YAxis
                       yAxisId="temp" domain={['auto', 'auto']}
-                      fontSize={9} tick={{ fill: '#9ab1c8' }} tickLine={false} axisLine={false}
+                      fontSize={9} tick={{ fill: '#8ba08e' }} tickLine={false} axisLine={false}
                     />
                     <YAxis
                       yAxisId="rain" orientation="right"
@@ -246,7 +249,7 @@ export default function WeatherWidget({ geojson, startDate, endDate }) {
                     <RTooltip contentStyle={TOOLTIP_STYLE}
                       formatter={(v, n) => [v != null ? v.toFixed(1) : '—', n]} />
                     <Bar   yAxisId="rain" dataKey="precip" name="Précip. (mm)" fill="#93c5fd" opacity={0.65} radius={[2, 2, 0, 0]} />
-                    <Line  yAxisId="temp" type="monotone" dataKey="tmax"  name="Tmax (°C)" stroke="#ef4444" strokeWidth={1.5} dot={false} />
+                    <Line  yAxisId="temp" type="monotone" dataKey="tmax"  name="Tmax (°C)" stroke="#bf3226" strokeWidth={1.5} dot={false} />
                     <Line  yAxisId="temp" type="monotone" dataKey="tmean" name="Tmoy (°C)" stroke="#f97316" strokeWidth={2}   dot={false} />
                     <Line  yAxisId="temp" type="monotone" dataKey="tmin"  name="Tmin (°C)" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
                   </ComposedChart>
@@ -260,12 +263,12 @@ export default function WeatherWidget({ geojson, startDate, endDate }) {
                   <ComposedChart data={historical} margin={{ top: 4, right: 38, left: -24, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" vertical={false} />
                     <XAxis
-                      dataKey="label" fontSize={9} tick={{ fill: '#9ab1c8' }}
+                      dataKey="label" fontSize={9} tick={{ fill: '#8ba08e' }}
                       tickLine={false} interval={xInterval}
                     />
                     <YAxis
                       yAxisId="hum"  domain={[0, 100]}
-                      fontSize={9} tick={{ fill: '#9ab1c8' }} tickLine={false} axisLine={false}
+                      fontSize={9} tick={{ fill: '#8ba08e' }} tickLine={false} axisLine={false}
                     />
                     <YAxis
                       yAxisId="wind" orientation="right"
@@ -301,7 +304,7 @@ export default function WeatherWidget({ geojson, startDate, endDate }) {
                             <td>{w.tmoy}</td>
                             <td>{w.pluie}</td>
                             <td>{w.eto}</td>
-                            <td style={{ color: w.stressDays > 0 ? '#ef4444' : 'inherit', fontWeight: w.stressDays > 0 ? 600 : 400 }}>
+                            <td style={{ color: w.stressDays > 0 ? '#bf3226' : 'inherit', fontWeight: w.stressDays > 0 ? 600 : 400 }}>
                               {w.stressDays}
                             </td>
                           </tr>

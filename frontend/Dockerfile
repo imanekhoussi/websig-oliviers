@@ -1,27 +1,23 @@
-# ─────────────────────────────────────────────
-# Étape 1 : Build — compilation du frontend React/Vite
-# ─────────────────────────────────────────────
+# ── Stage 1 : build React/Vite ──────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
 
-# Copie des fichiers de dépendances en premier pour profiter du cache Docker
-COPY package.json package-lock.json* ./
-RUN npm install
-
-# Copie du reste du code source puis compilation
 COPY . .
+
+# VITE_API_URL vide = URLs relatives → Nginx proxifie /api, /tiles, /uploads
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
+
 RUN npm run build
 
-# ─────────────────────────────────────────────
-# Étape 2 : Production — service des fichiers statiques via Nginx
-# ─────────────────────────────────────────────
-FROM nginx:alpine
+# ── Stage 2 : servir avec Nginx ──────────────────────────────────────────────
+FROM nginx:1.27-alpine
 
-# Copie uniquement le dossier dist généré à l'étape précédente
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Exposition du port HTTP
 EXPOSE 80
-
-# Nginx démarre automatiquement (commande par défaut de l'image)
+CMD ["nginx", "-g", "daemon off;"]
